@@ -4,6 +4,7 @@ import rateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
 import { editJobsRoutes } from "./modules/edit-jobs/edit-jobs.routes";
 import { authRoutes } from "./modules/auth/auth.routes";
+import { uploadsRoutes } from "./modules/uploads/uploads.routes";
 import { videosRoutes } from "./modules/videos/videos.routes";
 import jwtPlugin from "./plugins/jwt";
 import prismaPlugin from "./plugins/prisma";
@@ -57,6 +58,9 @@ export function buildApp() {
   });
   app.register(editJobsRoutes, {
     prefix: "/api/v1/edit-jobs",
+  });
+  app.register(uploadsRoutes, {
+    prefix: "/api/v1/uploads",
   });
 
   return app;
