@@ -17,18 +17,25 @@ function createJob(data: unknown): Job<EditJobQueuePayload> {
   } as Job<EditJobQueuePayload>;
 }
 
-function createDependencies(overrides: { delay?: () => Promise<void> } = {}) {
+function createDependencies(overrides: { renderEditJob?: () => Promise<{ outputStorageKey: string; durationMs: number }> } = {}) {
   return {
     prisma: {
       editJob: {
         update: vi.fn().mockResolvedValue({}),
       },
     },
+    renderingService: {
+      renderEditJob:
+        overrides.renderEditJob ??
+        vi.fn().mockResolvedValue({
+          outputStorageKey: `outputs/${validPayload.userId}/${validPayload.editJobId}.mp4`,
+          durationMs: 1000,
+        }),
+    },
     logger: {
       info: vi.fn(),
       error: vi.fn(),
     },
-    delay: overrides.delay ?? vi.fn().mockResolvedValue(undefined),
     now: vi.fn(() => new Date("2026-06-20T00:00:00.000Z")),
   };
 }
@@ -48,9 +55,10 @@ describe("processEditJob", () => {
     ).rejects.toThrow();
 
     expect(dependencies.prisma.editJob.update).not.toHaveBeenCalled();
+    expect(dependencies.renderingService.renderEditJob).not.toHaveBeenCalled();
   });
 
-  it("transitions an edit job from PROCESSING to COMPLETED", async () => {
+  it("transitions an edit job from PROCESSING to COMPLETED and stores outputStorageKey", async () => {
     const dependencies = createDependencies();
 
     await processEditJob(createJob(validPayload), dependencies);
@@ -72,10 +80,12 @@ describe("processEditJob", () => {
       },
       data: {
         status: EditJobStatus.COMPLETED,
+        outputStorageKey: `outputs/${validPayload.userId}/${validPayload.editJobId}.mp4`,
         completedAt: new Date("2026-06-20T00:00:00.000Z"),
         errorMessage: null,
       },
     });
+    expect(dependencies.renderingService.renderEditJob).toHaveBeenCalledWith(validPayload.editJobId);
     expect(dependencies.logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         event: "edit_job.job_started",
@@ -93,7 +103,7 @@ describe("processEditJob", () => {
   it("transitions an edit job to FAILED and rethrows processing errors", async () => {
     const processingError = new Error("simulated failure");
     const dependencies = createDependencies({
-      delay: vi.fn().mockRejectedValue(processingError),
+      renderEditJob: vi.fn().mockRejectedValue(processingError),
     });
 
     await expect(processEditJob(createJob(validPayload), dependencies)).rejects.toThrow("simulated failure");

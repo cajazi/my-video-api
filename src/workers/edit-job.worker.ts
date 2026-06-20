@@ -3,13 +3,16 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Worker, type ConnectionOptions, type Job } from "bullmq";
 import { env } from "../config/env";
+import { MockRenderer } from "../modules/rendering/mock.renderer";
+import { RenderingService } from "../modules/rendering/rendering.service";
+import type { RenderResult } from "../modules/rendering/rendering.types";
 import {
   EDIT_JOB_PROCESS_NAME,
   EDIT_JOBS_QUEUE_NAME,
   editJobQueuePayloadSchema,
   type EditJobQueuePayload,
 } from "../queues/queue.constants";
-import { EDIT_JOB_SIMULATED_PROCESSING_DELAY_MS, EDIT_JOB_WORKER_CONCURRENCY } from "./worker.constants";
+import { EDIT_JOB_WORKER_CONCURRENCY } from "./worker.constants";
 
 type EditJobUpdate = {
   where: {
@@ -20,6 +23,7 @@ type EditJobUpdate = {
     startedAt?: Date | null;
     completedAt?: Date | null;
     errorMessage?: string | null;
+    outputStorageKey?: string | null;
   };
 };
 
@@ -34,10 +38,14 @@ type StructuredLogger = {
   error(input: Record<string, unknown>): void;
 };
 
+type EditJobRenderingService = {
+  renderEditJob(editJobId: string): Promise<RenderResult>;
+};
+
 type ProcessEditJobDependencies = {
   prisma: EditJobPersistence;
+  renderingService: EditJobRenderingService;
   logger: StructuredLogger;
-  delay?: () => Promise<void>;
   now?: () => Date;
 };
 
@@ -70,15 +78,8 @@ function createConsoleLogger(): StructuredLogger {
   };
 }
 
-function defaultDelay() {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, EDIT_JOB_SIMULATED_PROCESSING_DELAY_MS);
-  });
-}
-
 export async function processEditJob(job: Job<EditJobQueuePayload>, dependencies: ProcessEditJobDependencies) {
   const payload = editJobQueuePayloadSchema.parse(job.data);
-  const delay = dependencies.delay ?? defaultDelay;
   const now = dependencies.now ?? (() => new Date());
   const logContext = {
     queueName: EDIT_JOBS_QUEUE_NAME,
@@ -107,7 +108,7 @@ export async function processEditJob(job: Job<EditJobQueuePayload>, dependencies
   });
 
   try {
-    await delay();
+    const renderResult = await dependencies.renderingService.renderEditJob(payload.editJobId);
 
     await dependencies.prisma.editJob.update({
       where: {
@@ -115,6 +116,7 @@ export async function processEditJob(job: Job<EditJobQueuePayload>, dependencies
       },
       data: {
         status: EditJobStatus.COMPLETED,
+        outputStorageKey: renderResult.outputStorageKey,
         completedAt: now(),
         errorMessage: null,
       },
@@ -155,11 +157,13 @@ export async function startEditJobWorker() {
     adapter,
   });
   const logger = createConsoleLogger();
+  const renderingService = new RenderingService(prisma, new MockRenderer());
   const worker = new Worker<EditJobQueuePayload, void, typeof EDIT_JOB_PROCESS_NAME>(
     EDIT_JOBS_QUEUE_NAME,
     async (job) => {
       await processEditJob(job, {
         prisma,
+        renderingService,
         logger,
       });
     },
