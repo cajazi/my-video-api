@@ -3,7 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Worker, type ConnectionOptions, type Job } from "bullmq";
 import { env } from "../config/env";
-import { MockRenderer } from "../modules/rendering/mock.renderer";
+import { RenderingFactory } from "../modules/rendering/rendering.factory";
 import { RenderingService } from "../modules/rendering/rendering.service";
 import type { RenderResult } from "../modules/rendering/rendering.types";
 import {
@@ -157,7 +157,7 @@ export async function startEditJobWorker() {
     adapter,
   });
   const logger = createConsoleLogger();
-  const renderingService = new RenderingService(prisma, new MockRenderer());
+  const renderingService = await new RenderingFactory(prisma, env.RENDERER_PROVIDER).createRenderingService();
   const worker = new Worker<EditJobQueuePayload, void, typeof EDIT_JOB_PROCESS_NAME>(
     EDIT_JOBS_QUEUE_NAME,
     async (job) => {
