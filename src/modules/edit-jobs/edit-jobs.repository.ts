@@ -45,6 +45,15 @@ export class EditJobsRepository {
     });
   }
 
+  deleteByIdForUser(id: string, userId: string) {
+    return this.prisma.editJob.deleteMany({
+      where: {
+        id,
+        userId,
+      },
+    });
+  }
+
   findByIdForUser(id: string, userId: string) {
     return this.prisma.editJob.findFirst({
       where: {
