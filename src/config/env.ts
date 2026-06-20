@@ -10,6 +10,9 @@ const envSchema = z.object({
   SUPABASE_URL: z.string().url("SUPABASE_URL must be a valid URL"),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, "SUPABASE_SERVICE_ROLE_KEY is required"),
   SUPABASE_STORAGE_BUCKET: z.string().min(1, "SUPABASE_STORAGE_BUCKET is required"),
+  REDIS_HOST: z.string().min(1, "REDIS_HOST is required"),
+  REDIS_PORT: z.coerce.number().int().positive("REDIS_PORT must be a positive integer"),
+  REDIS_PASSWORD: z.string().default(""),
 });
 
 export const env = envSchema.parse(process.env);
