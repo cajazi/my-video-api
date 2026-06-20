@@ -2,7 +2,9 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
+import { editJobsRoutes } from "./modules/edit-jobs/edit-jobs.routes";
 import { authRoutes } from "./modules/auth/auth.routes";
+import { videosRoutes } from "./modules/videos/videos.routes";
 import jwtPlugin from "./plugins/jwt";
 import prismaPlugin from "./plugins/prisma";
 
@@ -49,6 +51,12 @@ export function buildApp() {
 
   app.register(authRoutes, {
     prefix: "/api/v1/auth",
+  });
+  app.register(videosRoutes, {
+    prefix: "/api/v1/videos",
+  });
+  app.register(editJobsRoutes, {
+    prefix: "/api/v1/edit-jobs",
   });
 
   return app;
