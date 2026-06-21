@@ -27,11 +27,13 @@ function createClip(overrides: Record<string, unknown> = {}) {
 function createValidEditSpec(
   clips: Record<string, unknown>[] = [createClip()],
   settings: Record<string, unknown> = exportSettings,
+  transitions: Record<string, unknown>[] = [],
 ) {
   return {
     version: "1",
     timeline: {
       exportSettings: settings,
+      transitions,
       tracks: [
         {
           id: "track-1",
@@ -339,6 +341,227 @@ describe("createEditJobSchema", () => {
           trimEndMs: 1000,
           durationMs: 1000,
         }),
+      ]),
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a dissolve transition between adjacent clips", () => {
+    const clips = [
+      createClip({
+        id: "clip-1",
+        positionMs: 0,
+        trimStartMs: 0,
+        trimEndMs: 2000,
+        durationMs: 2000,
+      }),
+      createClip({
+        id: "clip-2",
+        positionMs: 2000,
+        trimStartMs: 5000,
+        trimEndMs: 7000,
+        durationMs: 2000,
+      }),
+    ];
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(clips, exportSettings, [
+        {
+          id: "transition-1",
+          type: "dissolve",
+          fromClipId: "clip-1",
+          toClipId: "clip-2",
+          durationMs: 500,
+        },
+      ]),
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a slide transition between adjacent clips", () => {
+    const clips = [
+      createClip({
+        id: "clip-1",
+        positionMs: 0,
+        trimStartMs: 0,
+        trimEndMs: 3000,
+        durationMs: 3000,
+      }),
+      createClip({
+        id: "clip-2",
+        positionMs: 3000,
+        trimStartMs: 5000,
+        trimEndMs: 8000,
+        durationMs: 3000,
+      }),
+    ];
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(clips, exportSettings, [
+        {
+          id: "transition-1",
+          type: "slide_left",
+          fromClipId: "clip-1",
+          toClipId: "clip-2",
+          durationMs: 1000,
+        },
+      ]),
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects transitions with missing fromClipId references", () => {
+    const clips = [
+      createClip({ id: "clip-1", positionMs: 0, trimStartMs: 0, trimEndMs: 1000, durationMs: 1000 }),
+      createClip({ id: "clip-2", positionMs: 1000, trimStartMs: 2000, trimEndMs: 3000, durationMs: 1000 }),
+    ];
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(clips, exportSettings, [
+        {
+          id: "transition-1",
+          type: "dissolve",
+          fromClipId: "missing-clip",
+          toClipId: "clip-2",
+          durationMs: 250,
+        },
+      ]),
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects transitions with missing toClipId references", () => {
+    const clips = [
+      createClip({ id: "clip-1", positionMs: 0, trimStartMs: 0, trimEndMs: 1000, durationMs: 1000 }),
+      createClip({ id: "clip-2", positionMs: 1000, trimStartMs: 2000, trimEndMs: 3000, durationMs: 1000 }),
+    ];
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(clips, exportSettings, [
+        {
+          id: "transition-1",
+          type: "dissolve",
+          fromClipId: "clip-1",
+          toClipId: "missing-clip",
+          durationMs: 250,
+        },
+      ]),
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects transitions between non-adjacent clips", () => {
+    const clips = [
+      createClip({ id: "clip-1", positionMs: 0, trimStartMs: 0, trimEndMs: 1000, durationMs: 1000 }),
+      createClip({ id: "clip-2", positionMs: 1000, trimStartMs: 2000, trimEndMs: 3000, durationMs: 1000 }),
+      createClip({ id: "clip-3", positionMs: 2000, trimStartMs: 4000, trimEndMs: 5000, durationMs: 1000 }),
+    ];
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(clips, exportSettings, [
+        {
+          id: "transition-1",
+          type: "zoom_in",
+          fromClipId: "clip-1",
+          toClipId: "clip-3",
+          durationMs: 250,
+        },
+      ]),
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects transitions across timeline gaps", () => {
+    const clips = [
+      createClip({ id: "clip-1", positionMs: 0, trimStartMs: 0, trimEndMs: 1000, durationMs: 1000 }),
+      createClip({ id: "clip-2", positionMs: 1500, trimStartMs: 2000, trimEndMs: 3000, durationMs: 1000 }),
+    ];
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(clips, exportSettings, [
+        {
+          id: "transition-1",
+          type: "dip_to_black",
+          fromClipId: "clip-1",
+          toClipId: "clip-2",
+          durationMs: 250,
+        },
+      ]),
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects duplicate transition boundaries", () => {
+    const clips = [
+      createClip({ id: "clip-1", positionMs: 0, trimStartMs: 0, trimEndMs: 2000, durationMs: 2000 }),
+      createClip({ id: "clip-2", positionMs: 2000, trimStartMs: 4000, trimEndMs: 6000, durationMs: 2000 }),
+    ];
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(clips, exportSettings, [
+        {
+          id: "transition-1",
+          type: "dissolve",
+          fromClipId: "clip-1",
+          toClipId: "clip-2",
+          durationMs: 500,
+        },
+        {
+          id: "transition-2",
+          type: "slide_right",
+          fromClipId: "clip-1",
+          toClipId: "clip-2",
+          durationMs: 500,
+        },
+      ]),
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects transitions longer than 50 percent of either adjacent clip", () => {
+    const clips = [
+      createClip({ id: "clip-1", positionMs: 0, trimStartMs: 0, trimEndMs: 1000, durationMs: 1000 }),
+      createClip({ id: "clip-2", positionMs: 1000, trimStartMs: 2000, trimEndMs: 4000, durationMs: 2000 }),
+    ];
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(clips, exportSettings, [
+        {
+          id: "transition-1",
+          type: "zoom_out",
+          fromClipId: "clip-1",
+          toClipId: "clip-2",
+          durationMs: 501,
+        },
+      ]),
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects zero-duration transitions", () => {
+    const clips = [
+      createClip({ id: "clip-1", positionMs: 0, trimStartMs: 0, trimEndMs: 1000, durationMs: 1000 }),
+      createClip({ id: "clip-2", positionMs: 1000, trimStartMs: 2000, trimEndMs: 3000, durationMs: 1000 }),
+    ];
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(clips, exportSettings, [
+        {
+          id: "transition-1",
+          type: "dissolve",
+          fromClipId: "clip-1",
+          toClipId: "clip-2",
+          durationMs: 0,
+        },
       ]),
     });
 

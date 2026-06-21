@@ -267,6 +267,88 @@ describe("processEditJob", () => {
     });
   });
 
+  it("processes a V1 edit spec with transitions without rendering transition visuals yet", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath: "C:\\tmp\\source.mp4",
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList: vi.fn().mockResolvedValue(undefined),
+      executeFfmpeg,
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1250),
+    });
+    const renderingService = new RenderingService(
+      {
+        editJob: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: validPayload.editJobId,
+            userId: validPayload.userId,
+            videoId: validPayload.videoId,
+            inputConfig: {
+              ...editSpec,
+              timeline: {
+                ...editSpec.timeline,
+                tracks: [
+                  {
+                    id: "track-1",
+                    type: "video",
+                    clips: [
+                      {
+                        id: "clip-1",
+                        assetId: "asset-1",
+                        videoId: validPayload.videoId,
+                        positionMs: 0,
+                        trimStartMs: 0,
+                        trimEndMs: 2000,
+                        durationMs: 2000,
+                      },
+                      {
+                        id: "clip-2",
+                        assetId: "asset-2",
+                        videoId: validPayload.videoId,
+                        positionMs: 2000,
+                        trimStartMs: 5000,
+                        trimEndMs: 7000,
+                        durationMs: 2000,
+                      },
+                    ],
+                  },
+                ],
+                transitions: [
+                  {
+                    id: "transition-1",
+                    type: "dissolve",
+                    fromClipId: "clip-1",
+                    toClipId: "clip-2",
+                    durationMs: 500,
+                  },
+                ],
+              },
+            },
+          }),
+        },
+        video: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: validPayload.videoId,
+            ownerId: validPayload.userId,
+            storageKey: "source-media/user/source.mp4",
+          }),
+        },
+      },
+      renderer,
+    );
+    const dependencies = createDependencies({
+      renderEditJob: renderingService.renderEditJob.bind(renderingService),
+    });
+
+    await processEditJob(createJob(validPayload), dependencies);
+
+    expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["-ss", "0", "-to", "2"]));
+    expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["-ss", "5", "-to", "7"]));
+    expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["-f", "concat"]));
+    expect(dependencies.renderedOutputStorage.uploadRenderedOutput).toHaveBeenCalled();
+  });
+
   it("marks the job failed before rendering when stored export settings are invalid", async () => {
     const renderer = {
       render: vi.fn(),

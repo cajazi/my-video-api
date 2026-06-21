@@ -4,6 +4,15 @@ export const EDIT_SPEC_V1_VERSION = "1";
 export const EXPORT_RESOLUTION_PRESETS = ["720p", "1080p", "4K"] as const;
 export const EXPORT_ASPECT_RATIOS = ["9:16", "16:9", "1:1", "4:5"] as const;
 export const EXPORT_FPS_VALUES = [24, 30, 60] as const;
+export const TRANSITION_TYPES = [
+  "dissolve",
+  "dip_to_black",
+  "dip_to_white",
+  "slide_left",
+  "slide_right",
+  "zoom_in",
+  "zoom_out",
+] as const;
 
 const exportSettingsSchema = z
   .object({
@@ -96,16 +105,26 @@ const videoTrackSchema = z.object({
   clips: z.array(clipTimingSchema).min(1),
 });
 
+const transitionSchema = z.object({
+  id: z.string().min(1),
+  type: z.enum(TRANSITION_TYPES),
+  fromClipId: z.string().min(1),
+  toClipId: z.string().min(1),
+  durationMs: z.number().int().positive(),
+});
+
 export const editSpecV1Schema = z
   .object({
     version: z.literal(EDIT_SPEC_V1_VERSION),
     timeline: z.object({
       exportSettings: exportSettingsSchema,
       tracks: z.array(videoTrackSchema).length(1),
+      transitions: z.array(transitionSchema).default([]),
     }),
   })
   .superRefine((editSpec, context) => {
     const clips = editSpec.timeline.tracks[0]?.clips ?? [];
+    const clipsById = new Map(clips.map((clip, index) => [clip.id, { clip, index }]));
 
     if (clips[0]?.positionMs !== 0) {
       context.addIssue({
@@ -133,6 +152,74 @@ export const editSpecV1Schema = z
           code: "custom",
           message: "clips must not overlap",
           path: ["timeline", "tracks", 0, "clips", index, "positionMs"],
+        });
+      }
+    }
+
+    const transitionBoundaries = new Set<string>();
+
+    for (const [transitionIndex, transition] of editSpec.timeline.transitions.entries()) {
+      const from = clipsById.get(transition.fromClipId);
+      const to = clipsById.get(transition.toClipId);
+
+      if (!from) {
+        context.addIssue({
+          code: "custom",
+          message: "fromClipId must reference an existing clip",
+          path: ["timeline", "transitions", transitionIndex, "fromClipId"],
+        });
+      }
+
+      if (!to) {
+        context.addIssue({
+          code: "custom",
+          message: "toClipId must reference an existing clip",
+          path: ["timeline", "transitions", transitionIndex, "toClipId"],
+        });
+      }
+
+      if (!from || !to) {
+        continue;
+      }
+
+      const boundaryKey = `${transition.fromClipId}->${transition.toClipId}`;
+
+      if (transitionBoundaries.has(boundaryKey)) {
+        context.addIssue({
+          code: "custom",
+          message: "duplicate transition for clip boundary",
+          path: ["timeline", "transitions", transitionIndex],
+        });
+      }
+
+      transitionBoundaries.add(boundaryKey);
+
+      if (to.index !== from.index + 1) {
+        context.addIssue({
+          code: "custom",
+          message: "transition clips must be adjacent on the same video track",
+          path: ["timeline", "transitions", transitionIndex],
+        });
+      }
+
+      const fromEndMs = from.clip.positionMs + from.clip.durationMs;
+
+      if (to.clip.positionMs !== fromEndMs) {
+        context.addIssue({
+          code: "custom",
+          message: "transitions across timeline gaps are not supported in V1",
+          path: ["timeline", "transitions", transitionIndex],
+        });
+      }
+
+      if (
+        transition.durationMs > from.clip.durationMs / 2 ||
+        transition.durationMs > to.clip.durationMs / 2
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "transition durationMs must not exceed 50% of either adjacent clip duration",
+          path: ["timeline", "transitions", transitionIndex, "durationMs"],
         });
       }
     }
