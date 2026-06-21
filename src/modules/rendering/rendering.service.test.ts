@@ -21,10 +21,19 @@ const editSpec = {
             id: "clip-1",
             assetId: "asset-1",
             videoId,
-            positionMs: 15000,
+            positionMs: 0,
             trimStartMs: 2000,
             trimEndMs: 6500,
             durationMs: 4500,
+          },
+          {
+            id: "clip-2",
+            assetId: "asset-2",
+            videoId,
+            positionMs: 4500,
+            trimStartMs: 10000,
+            trimEndMs: 13000,
+            durationMs: 3000,
           },
         ],
       },
@@ -75,7 +84,7 @@ describe("MockRenderer", () => {
 });
 
 describe("RenderingService", () => {
-  it("loads edit spec and converts the first timeline clip to renderer trim input", async () => {
+  it("loads edit spec and converts timeline clips to render segments", async () => {
     const prisma = createPrismaMock();
     const renderer: Renderer = {
       render: vi.fn().mockResolvedValue({
@@ -107,10 +116,27 @@ describe("RenderingService", () => {
       userId,
       videoId,
       inputConfig: {
-        trim: {
-          start: 2,
-          end: 6.5,
-        },
+        type: "timeline-render-plan-v1",
+        segments: [
+          {
+            clipId: "clip-1",
+            sourceVideoId: videoId,
+            timelineStartMs: 0,
+            timelineEndMs: 4500,
+            trimStartMs: 2000,
+            trimEndMs: 6500,
+            durationMs: 4500,
+          },
+          {
+            clipId: "clip-2",
+            sourceVideoId: videoId,
+            timelineStartMs: 4500,
+            timelineEndMs: 7500,
+            trimStartMs: 10000,
+            trimEndMs: 13000,
+            durationMs: 3000,
+          },
+        ],
       },
       sourceStorageKey,
     });

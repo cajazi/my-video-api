@@ -2,7 +2,6 @@ import type { Prisma } from "@prisma/client";
 import { EditJobStatus } from "@prisma/client";
 import type { EditJobQueuePayload } from "../../queues/queue.constants";
 import { HttpError } from "../../utils/http-error";
-import { getFirstVideoClip } from "../edit-specs/edit-spec-v1.schema";
 import type { CreateEditJobInput } from "./edit-jobs.schemas";
 import { toEditJobResponse } from "./edit-jobs.presenter";
 import type { EditJobsRepository } from "./edit-jobs.repository";
@@ -24,9 +23,9 @@ export class EditJobsService {
   ) {}
 
   async createEditJob(userId: string, input: CreateEditJobInput) {
-    const firstClip = getFirstVideoClip(input.editSpec);
+    const clips = input.editSpec.timeline.tracks[0].clips;
 
-    if (firstClip.videoId !== input.videoId) {
+    if (clips.some((clip) => clip.videoId !== input.videoId)) {
       throw new HttpError(CLIP_VIDEO_MISMATCH_MESSAGE, 400);
     }
 
