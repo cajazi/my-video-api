@@ -79,7 +79,7 @@ describe("createEditJobSchema", () => {
       videoId,
       editSpec: createValidEditSpec([
         createClip({
-        trimStartMs: -1,
+          trimStartMs: -1,
         }),
       ]),
     });
@@ -92,9 +92,9 @@ describe("createEditJobSchema", () => {
       videoId,
       editSpec: createValidEditSpec([
         createClip({
-        trimStartMs: 5000,
-        trimEndMs: 5000,
-        durationMs: 0,
+          trimStartMs: 5000,
+          trimEndMs: 5000,
+          durationMs: 0,
         }),
       ]),
     });
@@ -107,7 +107,7 @@ describe("createEditJobSchema", () => {
       videoId,
       editSpec: createValidEditSpec([
         createClip({
-        positionMs: -1,
+          positionMs: -1,
         }),
       ]),
     });
@@ -115,7 +115,7 @@ describe("createEditJobSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects positive timeline gaps until filler rendering exists", () => {
+  it("accepts positive timeline gaps between clips", () => {
     const result = createEditJobSchema.safeParse({
       videoId,
       editSpec: createValidEditSpec([
@@ -136,7 +136,7 @@ describe("createEditJobSchema", () => {
       ]),
     });
 
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it("rejects overlapping clips", () => {
@@ -179,6 +179,22 @@ describe("createEditJobSchema", () => {
           positionMs: 0,
           trimStartMs: 2000,
           trimEndMs: 3000,
+          durationMs: 1000,
+        }),
+      ]),
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects timelines where the first clip does not start at positionMs 0", () => {
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec([
+        createClip({
+          positionMs: 500,
+          trimStartMs: 0,
+          trimEndMs: 1000,
           durationMs: 1000,
         }),
       ]),

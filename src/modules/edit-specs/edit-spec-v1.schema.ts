@@ -74,20 +74,13 @@ export const editSpecV1Schema = z
           path: ["timeline", "tracks", 0, "clips", index, "positionMs"],
         });
       }
-
-      if (clip.positionMs > previousEndMs) {
-        context.addIssue({
-          code: "custom",
-          message: "timeline gaps are not supported by Edit Spec V1 rendering",
-          path: ["timeline", "tracks", 0, "clips", index, "positionMs"],
-        });
-      }
     }
   });
 
 export type EditSpecV1 = z.infer<typeof editSpecV1Schema>;
 export type EditSpecV1Clip = EditSpecV1["timeline"]["tracks"][number]["clips"][number];
 export type EditSpecV1RenderSegment = {
+  type: "clip";
   clipId: string;
   sourceVideoId: string;
   timelineStartMs: number;
@@ -121,6 +114,7 @@ export function createTrimInputFromEditSpecV1(editSpec: EditSpecV1) {
 
 export function createRenderSegmentsFromEditSpecV1(editSpec: EditSpecV1): EditSpecV1RenderSegment[] {
   return editSpec.timeline.tracks[0].clips.map((clip) => ({
+    type: "clip",
     clipId: clip.id,
     sourceVideoId: clip.videoId,
     timelineStartMs: clip.positionMs,

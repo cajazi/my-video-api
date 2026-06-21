@@ -42,6 +42,7 @@ describe("createTimelineRenderPlan", () => {
       type: "timeline-render-plan-v1",
       segments: [
         {
+          type: "clip",
           clipId: "clip-1",
           sourceVideoId: videoId,
           timelineStartMs: 0,
@@ -51,6 +52,7 @@ describe("createTimelineRenderPlan", () => {
           durationMs: 3000,
         },
         {
+          type: "clip",
           clipId: "clip-2",
           sourceVideoId: videoId,
           timelineStartMs: 3000,
@@ -61,5 +63,65 @@ describe("createTimelineRenderPlan", () => {
         },
       ],
     });
+  });
+
+  it("converts timeline gaps into black filler segments", () => {
+    const editSpec = editSpecV1Schema.parse({
+      version: "1",
+      timeline: {
+        tracks: [
+          {
+            id: "track-1",
+            type: "video",
+            clips: [
+              {
+                id: "clip-1",
+                assetId: "asset-1",
+                videoId,
+                positionMs: 0,
+                trimStartMs: 0,
+                trimEndMs: 1000,
+                durationMs: 1000,
+              },
+              {
+                id: "clip-2",
+                assetId: "asset-2",
+                videoId,
+                positionMs: 2500,
+                trimStartMs: 5000,
+                trimEndMs: 6000,
+                durationMs: 1000,
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(createTimelineRenderPlan(editSpec).segments).toEqual([
+      expect.objectContaining({
+        type: "clip",
+        clipId: "clip-1",
+        timelineStartMs: 0,
+        timelineEndMs: 1000,
+      }),
+      {
+        type: "filler",
+        fillerId: "gap-1",
+        timelineStartMs: 1000,
+        timelineEndMs: 2500,
+        durationMs: 1500,
+        fill: {
+          kind: "black",
+          color: "#000000",
+        },
+      },
+      expect.objectContaining({
+        type: "clip",
+        clipId: "clip-2",
+        timelineStartMs: 2500,
+        timelineEndMs: 3500,
+      }),
+    ]);
   });
 });
