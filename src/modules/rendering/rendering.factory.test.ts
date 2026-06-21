@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("./ffmpeg.utils", () => ({
   checkFfmpegAvailability: vi.fn(),
+  runFfmpeg: vi.fn(),
 }));
 
 import { FFmpegRenderer } from "./ffmpeg.renderer";

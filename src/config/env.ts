@@ -14,6 +14,7 @@ const envSchema = z.object({
   REDIS_PORT: z.coerce.number().int().positive("REDIS_PORT must be a positive integer"),
   REDIS_PASSWORD: z.string().default(""),
   RENDERER_PROVIDER: z.enum(["mock", "ffmpeg"]).default("mock"),
+  LOCAL_TEST_VIDEO_PATH: z.string().default(""),
 });
 
 export const env = envSchema.parse(process.env);

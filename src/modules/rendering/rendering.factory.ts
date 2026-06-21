@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import type { env } from "../../config/env";
+import { env as runtimeEnv } from "../../config/env";
 import { FFmpegRenderer } from "./ffmpeg.renderer";
 import { checkFfmpegAvailability } from "./ffmpeg.utils";
 import { MockRenderer } from "./mock.renderer";
@@ -31,7 +32,9 @@ export class RenderingFactory {
         throw new Error("FFmpeg renderer selected but ffmpeg is not available");
       }
 
-      return new FFmpegRenderer();
+      return new FFmpegRenderer({
+        localTestVideoPath: runtimeEnv.LOCAL_TEST_VIDEO_PATH,
+      });
     }
 
     const exhaustiveCheck: never = this.provider;
