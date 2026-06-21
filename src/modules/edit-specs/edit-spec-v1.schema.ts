@@ -28,6 +28,38 @@ const exportSettingsSchema = z
         path: ["resolutionPreset"],
       });
     }
+
+    if (settings.width % 2 !== 0) {
+      context.addIssue({
+        code: "custom",
+        message: "width must be even",
+        path: ["width"],
+      });
+    }
+
+    if (settings.height % 2 !== 0) {
+      context.addIssue({
+        code: "custom",
+        message: "height must be even",
+        path: ["height"],
+      });
+    }
+
+    const expectedAspectRatioByName = {
+      "9:16": [9, 16],
+      "16:9": [16, 9],
+      "1:1": [1, 1],
+      "4:5": [4, 5],
+    } satisfies Record<(typeof EXPORT_ASPECT_RATIOS)[number], [number, number]>;
+    const [ratioWidth, ratioHeight] = expectedAspectRatioByName[settings.aspectRatio];
+
+    if (settings.width * ratioHeight !== settings.height * ratioWidth) {
+      context.addIssue({
+        code: "custom",
+        message: "width and height must match aspectRatio",
+        path: ["aspectRatio"],
+      });
+    }
   });
 
 const clipTimingSchema = z
