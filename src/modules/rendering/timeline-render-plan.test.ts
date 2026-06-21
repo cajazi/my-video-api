@@ -198,12 +198,66 @@ describe("createTimelineRenderPlan", () => {
         toClipId: "clip-2",
         timelineStartMs: 2000,
         durationMs: 500,
+        outputTimelineDurationMs: 500,
       },
       expect.objectContaining({
         type: "clip",
         clipId: "clip-2",
       }),
     ]);
+  });
+
+  it("models dissolve output duration as total clip duration minus transition duration", () => {
+    const editSpec = editSpecV1Schema.parse({
+      version: "1",
+      timeline: {
+        exportSettings,
+        tracks: [
+          {
+            id: "track-1",
+            type: "video",
+            clips: [
+              {
+                id: "clip-1",
+                assetId: "asset-1",
+                videoId,
+                positionMs: 0,
+                trimStartMs: 0,
+                trimEndMs: 3000,
+                durationMs: 3000,
+              },
+              {
+                id: "clip-2",
+                assetId: "asset-2",
+                videoId,
+                positionMs: 3000,
+                trimStartMs: 6000,
+                trimEndMs: 10000,
+                durationMs: 4000,
+              },
+            ],
+          },
+        ],
+        transitions: [
+          {
+            id: "transition-1",
+            type: "dissolve",
+            fromClipId: "clip-1",
+            toClipId: "clip-2",
+            durationMs: 1000,
+          },
+        ],
+      },
+    });
+    const renderPlan = createTimelineRenderPlan(editSpec);
+    const mediaDurationMs = renderPlan.segments
+      .filter((segment) => segment.type === "clip" || segment.type === "filler")
+      .reduce((total, segment) => total + segment.durationMs, 0);
+    const transitionDurationMs = renderPlan.segments
+      .filter((segment) => segment.type === "transition")
+      .reduce((total, segment) => total + segment.outputTimelineDurationMs, 0);
+
+    expect(mediaDurationMs - transitionDurationMs).toBe(6000);
   });
 
   it("does not build a render plan for transitions rejected by edit spec validation", () => {
