@@ -2,12 +2,14 @@ import type { Prisma } from "@prisma/client";
 import { EditJobStatus } from "@prisma/client";
 import type { EditJobQueuePayload } from "../../queues/queue.constants";
 import { HttpError } from "../../utils/http-error";
+import { getFirstVideoClip } from "../edit-specs/edit-spec-v1.schema";
 import type { CreateEditJobInput } from "./edit-jobs.schemas";
 import { toEditJobResponse } from "./edit-jobs.presenter";
 import type { EditJobsRepository } from "./edit-jobs.repository";
 
 const NOT_FOUND_MESSAGE = "Resource not found";
 const QUEUE_UNAVAILABLE_MESSAGE = "Edit job queue is unavailable";
+const CLIP_VIDEO_MISMATCH_MESSAGE = "Edit spec clip videoId must match the edit job videoId";
 
 type EnqueueEditJob = (payload: EditJobQueuePayload) => Promise<unknown>;
 type RenderedOutputStorage = {
@@ -22,6 +24,12 @@ export class EditJobsService {
   ) {}
 
   async createEditJob(userId: string, input: CreateEditJobInput) {
+    const firstClip = getFirstVideoClip(input.editSpec);
+
+    if (firstClip.videoId !== input.videoId) {
+      throw new HttpError(CLIP_VIDEO_MISMATCH_MESSAGE, 400);
+    }
+
     const video = await this.repository.findVideoForOwner(input.videoId, userId);
 
     if (!video) {
@@ -31,7 +39,7 @@ export class EditJobsService {
     const editJob = await this.repository.create({
       userId,
       videoId: input.videoId,
-      inputConfig: input.inputConfig as Prisma.InputJsonValue,
+      inputConfig: input.editSpec as Prisma.InputJsonValue,
     });
 
     try {
