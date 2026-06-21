@@ -35,7 +35,30 @@ export const fillerRenderSegmentSchema = z.object({
   }),
 });
 
-export const renderSegmentSchema = z.discriminatedUnion("type", [clipRenderSegmentSchema, fillerRenderSegmentSchema]);
+export const transitionRenderOperationSchema = z.object({
+  type: z.literal("transition"),
+  exportSettings: exportSettingsSchema,
+  transitionId: z.string().min(1),
+  transitionType: z.enum([
+    "dissolve",
+    "dip_to_black",
+    "dip_to_white",
+    "slide_left",
+    "slide_right",
+    "zoom_in",
+    "zoom_out",
+  ]),
+  fromClipId: z.string().min(1),
+  toClipId: z.string().min(1),
+  timelineStartMs: z.number().int().min(0),
+  durationMs: z.number().int().positive(),
+});
+
+export const renderSegmentSchema = z.discriminatedUnion("type", [
+  clipRenderSegmentSchema,
+  fillerRenderSegmentSchema,
+  transitionRenderOperationSchema,
+]);
 
 export const timelineRenderPlanSchema = z.object({
   type: z.literal("timeline-render-plan-v1"),
@@ -51,6 +74,9 @@ export function createTimelineRenderPlan(editSpec: EditSpecV1): TimelineRenderPl
   const segments: TimelineRenderSegment[] = [];
   let cursorMs = 0;
   const exportSettings = editSpec.timeline.exportSettings;
+  const transitionsByFromClipId = new Map(
+    editSpec.timeline.transitions.map((transition) => [transition.fromClipId, transition]),
+  );
 
   for (const clip of editSpec.timeline.tracks[0].clips) {
     if (clip.positionMs > cursorMs) {
@@ -79,6 +105,22 @@ export function createTimelineRenderPlan(editSpec: EditSpecV1): TimelineRenderPl
       trimEndMs: clip.trimEndMs,
       durationMs: clip.durationMs,
     });
+
+    const transition = transitionsByFromClipId.get(clip.id);
+
+    if (transition) {
+      segments.push({
+        type: "transition",
+        exportSettings,
+        transitionId: transition.id,
+        transitionType: transition.type,
+        fromClipId: transition.fromClipId,
+        toClipId: transition.toClipId,
+        timelineStartMs: clip.positionMs + clip.durationMs,
+        durationMs: transition.durationMs,
+      });
+    }
+
     cursorMs = clip.positionMs + clip.durationMs;
   }
 

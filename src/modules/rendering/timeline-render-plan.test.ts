@@ -140,4 +140,115 @@ describe("createTimelineRenderPlan", () => {
       }),
     ]);
   });
+
+  it("includes transition operations for validated adjacent clip boundaries", () => {
+    const editSpec = editSpecV1Schema.parse({
+      version: "1",
+      timeline: {
+        exportSettings,
+        tracks: [
+          {
+            id: "track-1",
+            type: "video",
+            clips: [
+              {
+                id: "clip-1",
+                assetId: "asset-1",
+                videoId,
+                positionMs: 0,
+                trimStartMs: 0,
+                trimEndMs: 2000,
+                durationMs: 2000,
+              },
+              {
+                id: "clip-2",
+                assetId: "asset-2",
+                videoId,
+                positionMs: 2000,
+                trimStartMs: 5000,
+                trimEndMs: 7000,
+                durationMs: 2000,
+              },
+            ],
+          },
+        ],
+        transitions: [
+          {
+            id: "transition-1",
+            type: "slide_right",
+            fromClipId: "clip-1",
+            toClipId: "clip-2",
+            durationMs: 500,
+          },
+        ],
+      },
+    });
+
+    expect(createTimelineRenderPlan(editSpec).segments).toEqual([
+      expect.objectContaining({
+        type: "clip",
+        clipId: "clip-1",
+      }),
+      {
+        type: "transition",
+        exportSettings,
+        transitionId: "transition-1",
+        transitionType: "slide_right",
+        fromClipId: "clip-1",
+        toClipId: "clip-2",
+        timelineStartMs: 2000,
+        durationMs: 500,
+      },
+      expect.objectContaining({
+        type: "clip",
+        clipId: "clip-2",
+      }),
+    ]);
+  });
+
+  it("does not build a render plan for transitions rejected by edit spec validation", () => {
+    const result = editSpecV1Schema.safeParse({
+      version: "1",
+      timeline: {
+        exportSettings,
+        tracks: [
+          {
+            id: "track-1",
+            type: "video",
+            clips: [
+              {
+                id: "clip-1",
+                assetId: "asset-1",
+                videoId,
+                positionMs: 0,
+                trimStartMs: 0,
+                trimEndMs: 1000,
+                durationMs: 1000,
+              },
+              {
+                id: "clip-2",
+                assetId: "asset-2",
+                videoId,
+                positionMs: 2000,
+                trimStartMs: 5000,
+                trimEndMs: 6000,
+                durationMs: 1000,
+              },
+            ],
+          },
+        ],
+        transitions: [
+          {
+            id: "transition-1",
+            type: "dissolve",
+            fromClipId: "clip-1",
+            toClipId: "clip-2",
+            durationMs: 250,
+          },
+        ],
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
 });
