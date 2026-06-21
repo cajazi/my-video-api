@@ -266,4 +266,58 @@ describe("processEditJob", () => {
       storageKey: outputStorageKey,
     });
   });
+
+  it("marks the job failed before rendering when stored export settings are invalid", async () => {
+    const renderer = {
+      render: vi.fn(),
+    };
+    const renderingService = new RenderingService(
+      {
+        editJob: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: validPayload.editJobId,
+            userId: validPayload.userId,
+            videoId: validPayload.videoId,
+            inputConfig: {
+              ...editSpec,
+              timeline: {
+                ...editSpec.timeline,
+                exportSettings: {
+                  ...exportSettings,
+                  width: 1079,
+                },
+              },
+            },
+          }),
+        },
+        video: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: validPayload.videoId,
+            ownerId: validPayload.userId,
+            storageKey: "source-media/user/source.mp4",
+          }),
+        },
+      },
+      renderer,
+    );
+    const dependencies = createDependencies({
+      renderEditJob: renderingService.renderEditJob.bind(renderingService),
+    });
+
+    await expect(processEditJob(createJob(validPayload), dependencies)).rejects.toThrow();
+
+    expect(renderer.render).not.toHaveBeenCalled();
+    expect(dependencies.renderedOutputStorage.uploadRenderedOutput).not.toHaveBeenCalled();
+    expect(dependencies.prisma.editJob.update).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: {
+          id: validPayload.editJobId,
+        },
+        data: expect.objectContaining({
+          status: EditJobStatus.FAILED,
+        }),
+      }),
+    );
+  });
 });
