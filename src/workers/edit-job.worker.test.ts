@@ -267,7 +267,7 @@ describe("processEditJob", () => {
     });
   });
 
-  it("processes a V1 edit spec with transitions without rendering transition visuals yet", async () => {
+  it("processes a V1 edit spec with a dissolve transition through the FFmpeg render path", async () => {
     const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
     const renderer = new FFmpegRenderer({
       localTestVideoPath: "C:\\tmp\\source.mp4",
@@ -345,6 +345,12 @@ describe("processEditJob", () => {
 
     expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["-ss", "0", "-to", "2"]));
     expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["-ss", "5", "-to", "7"]));
+    expect(executeFfmpeg).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "-filter_complex",
+        "[0:v]scale=1080:1920,fps=60,format=yuv420p[v0];[1:v]scale=1080:1920,fps=60,format=yuv420p[v1];[v0][v1]xfade=transition=fade:duration=0.5:offset=1.5[v]",
+      ]),
+    );
     expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["-f", "concat"]));
     expect(dependencies.renderedOutputStorage.uploadRenderedOutput).toHaveBeenCalled();
   });

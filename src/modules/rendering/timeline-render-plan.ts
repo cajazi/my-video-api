@@ -52,6 +52,7 @@ export const transitionRenderOperationSchema = z.object({
   toClipId: z.string().min(1),
   timelineStartMs: z.number().int().min(0),
   durationMs: z.number().int().positive(),
+  outputTimelineDurationMs: z.number().int().positive(),
 });
 
 export const renderSegmentSchema = z.discriminatedUnion("type", [
@@ -118,6 +119,7 @@ export function createTimelineRenderPlan(editSpec: EditSpecV1): TimelineRenderPl
         toClipId: transition.toClipId,
         timelineStartMs: clip.positionMs + clip.durationMs,
         durationMs: transition.durationMs,
+        outputTimelineDurationMs: transition.durationMs,
       });
     }
 
