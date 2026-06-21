@@ -21,6 +21,10 @@ type RenderedMediaEntry = {
   outputPath: string;
 };
 
+type RenderedClipEntry = RenderedMediaEntry & {
+  segment: ClipRenderSegment;
+};
+
 type FFmpegRendererDependencies = {
   localTestVideoPath: string;
   checkAvailability?: () => Promise<boolean>;
@@ -164,41 +168,50 @@ export class FFmpegRenderer implements Renderer {
     );
     const mediaBySegment = new Map(renderedMediaEntries.map((entry) => [entry.segment, entry.outputPath]));
     const physicalOutputPaths: string[] = [];
-    const consumedClipIds = new Set<string>();
-    const transitionFromClipIds = new Set(
-      renderPlan.segments
-        .filter((segment): segment is TransitionRenderOperation => segment.type === "transition")
-        .map((segment) => segment.fromClipId),
-    );
     let dissolveIndex = 0;
 
-    for (const segment of renderPlan.segments) {
+    for (let index = 0; index < renderPlan.segments.length; index += 1) {
+      const segment = renderPlan.segments[index];
+
       if (segment.type === "transition") {
-        if (segment.transitionType !== "dissolve") {
-          throw new Error(`Unsupported transition renderer: ${segment.transitionType}`);
-        }
+        throw new Error(`Transition operation is missing outgoing clip media: ${segment.transitionId}`);
+      }
 
-        const fromEntry = mediaByClipId.get(segment.fromClipId);
-        const toEntry = mediaByClipId.get(segment.toClipId);
+      if (segment.type === "clip" && renderPlan.segments[index + 1]?.type === "transition") {
+        const chainClipEntries: RenderedClipEntry[] = [];
+        const chainTransitions: TransitionRenderOperation[] = [];
+        let cursor = index;
+        const firstEntry = mediaByClipId.get(segment.clipId);
 
-        if (!fromEntry || !toEntry) {
+        if (!firstEntry) {
           throw new Error("Dissolve transition requires rendered adjacent clip media");
         }
 
+        chainClipEntries.push(firstEntry);
+
+        while (renderPlan.segments[cursor + 1]?.type === "transition") {
+          const transition = renderPlan.segments[cursor + 1] as TransitionRenderOperation;
+
+          if (transition.transitionType !== "dissolve") {
+            throw new Error(`Unsupported transition renderer: ${transition.transitionType}`);
+          }
+
+          const toEntry = mediaByClipId.get(transition.toClipId);
+
+          if (!toEntry) {
+            throw new Error("Dissolve transition requires rendered adjacent clip media");
+          }
+
+          chainTransitions.push(transition);
+          chainClipEntries.push(toEntry);
+          cursor += 2;
+        }
+
         const outputPath = path.join(workspacePath, `dissolve-${String(dissolveIndex).padStart(3, "0")}.mp4`);
-        await this.renderDissolveTransition(fromEntry, toEntry, segment, outputPath);
+        await this.renderDissolveChain(chainClipEntries, chainTransitions, outputPath);
         physicalOutputPaths.push(outputPath);
-        consumedClipIds.add(segment.fromClipId);
-        consumedClipIds.add(segment.toClipId);
         dissolveIndex += 1;
-        continue;
-      }
-
-      if (segment.type === "clip" && consumedClipIds.has(segment.clipId)) {
-        continue;
-      }
-
-      if (segment.type === "clip" && transitionFromClipIds.has(segment.clipId)) {
+        index = cursor;
         continue;
       }
 
@@ -212,24 +225,38 @@ export class FFmpegRenderer implements Renderer {
     return physicalOutputPaths;
   }
 
-  private async renderDissolveTransition(
-    fromEntry: RenderedMediaEntry & { segment: ClipRenderSegment },
-    toEntry: RenderedMediaEntry & { segment: ClipRenderSegment },
-    transition: TransitionRenderOperation,
+  private async renderDissolveChain(
+    clipEntries: RenderedClipEntry[],
+    transitions: TransitionRenderOperation[],
     outputPath: string,
   ) {
-    const { width, height, fps } = transition.exportSettings;
-    const durationSeconds = transition.durationMs / 1000;
-    const offsetSeconds = (fromEntry.segment.durationMs - transition.durationMs) / 1000;
+    const { width, height, fps } = transitions[0].exportSettings;
+    const inputArgs = clipEntries.flatMap((entry) => ["-i", entry.outputPath]);
+    const normalizedInputs = clipEntries
+      .map((_, index) => `[${index}:v]scale=${width}:${height},fps=${fps},format=yuv420p[v${index}]`)
+      .join(";");
+    const xfadeFilters: string[] = [];
+    let composedDurationMs = clipEntries[0].segment.durationMs;
+    let previousLabel = "v0";
+
+    for (const [index, transition] of transitions.entries()) {
+      const nextLabel = `v${index + 1}`;
+      const outputLabel = index === transitions.length - 1 ? "v" : `x${index + 1}`;
+      const durationSeconds = transition.durationMs / 1000;
+      const offsetSeconds = (composedDurationMs - transition.durationMs) / 1000;
+
+      xfadeFilters.push(
+        `[${previousLabel}][${nextLabel}]xfade=transition=fade:duration=${durationSeconds}:offset=${offsetSeconds}[${outputLabel}]`,
+      );
+      composedDurationMs = composedDurationMs + clipEntries[index + 1].segment.durationMs - transition.durationMs;
+      previousLabel = outputLabel;
+    }
 
     await this.executeFfmpeg([
       "-y",
-      "-i",
-      fromEntry.outputPath,
-      "-i",
-      toEntry.outputPath,
+      ...inputArgs,
       "-filter_complex",
-      `[0:v]scale=${width}:${height},fps=${fps},format=yuv420p[v0];[1:v]scale=${width}:${height},fps=${fps},format=yuv420p[v1];[v0][v1]xfade=transition=fade:duration=${durationSeconds}:offset=${offsetSeconds}[v]`,
+      `${normalizedInputs};${xfadeFilters.join(";")}`,
       "-map",
       "[v]",
       "-an",
