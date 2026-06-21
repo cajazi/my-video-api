@@ -34,7 +34,7 @@ const editSpec = {
             id: "clip-1",
             assetId: "asset-1",
             videoId: validPayload.videoId,
-            positionMs: 2500,
+            positionMs: 0,
             trimStartMs: 1500,
             trimEndMs: 4000,
             durationMs: 2500,
