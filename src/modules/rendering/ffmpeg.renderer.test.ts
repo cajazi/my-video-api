@@ -342,6 +342,114 @@ describe("FFmpegRenderer", () => {
     expect(executeFfmpeg).toHaveBeenCalledTimes(4);
   });
 
+  it("renders chained dissolve transitions without duplicating the middle clip", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const writeConcatList = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList,
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1750),
+    });
+    const workspacePath = path.resolve(process.cwd(), "tmp", "jobs", editJobId);
+    const segment0Path = path.join(workspacePath, "segment-000.mp4");
+    const segment1Path = path.join(workspacePath, "segment-001.mp4");
+    const segment2Path = path.join(workspacePath, "segment-002.mp4");
+    const dissolvePath = path.join(workspacePath, "dissolve-000.mp4");
+    const concatListPath = path.join(workspacePath, "concat-list.txt");
+
+    await renderer.render(
+      createInput({
+        segments: [
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-1",
+            sourceVideoId: videoId,
+            timelineStartMs: 0,
+            timelineEndMs: 3000,
+            trimStartMs: 0,
+            trimEndMs: 3000,
+            durationMs: 3000,
+          },
+          {
+            type: "transition",
+            exportSettings,
+            transitionId: "transition-1",
+            transitionType: "dissolve",
+            fromClipId: "clip-1",
+            toClipId: "clip-2",
+            timelineStartMs: 3000,
+            durationMs: 1000,
+            outputTimelineDurationMs: 1000,
+          },
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-2",
+            sourceVideoId: videoId,
+            timelineStartMs: 3000,
+            timelineEndMs: 7000,
+            trimStartMs: 5000,
+            trimEndMs: 9000,
+            durationMs: 4000,
+          },
+          {
+            type: "transition",
+            exportSettings,
+            transitionId: "transition-2",
+            transitionType: "dissolve",
+            fromClipId: "clip-2",
+            toClipId: "clip-3",
+            timelineStartMs: 7000,
+            durationMs: 500,
+            outputTimelineDurationMs: 500,
+          },
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-3",
+            sourceVideoId: videoId,
+            timelineStartMs: 7000,
+            timelineEndMs: 9000,
+            trimStartMs: 12000,
+            trimEndMs: 14000,
+            durationMs: 2000,
+          },
+        ],
+      }),
+    );
+
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      1,
+      expect.arrayContaining(["-ss", "0", "-to", "3", segment0Path]),
+    );
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      2,
+      expect.arrayContaining(["-ss", "5", "-to", "9", segment1Path]),
+    );
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      3,
+      expect.arrayContaining(["-ss", "12", "-to", "14", segment2Path]),
+    );
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      4,
+      expect.arrayContaining([
+        "-filter_complex",
+        "[0:v]scale=1080:1920,fps=60,format=yuv420p[v0];[1:v]scale=1080:1920,fps=60,format=yuv420p[v1];[2:v]scale=1080:1920,fps=60,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=1:offset=2[x1];[x1][v2]xfade=transition=fade:duration=0.5:offset=5.5[v]",
+        dissolvePath,
+      ]),
+    );
+    expect(writeConcatList).toHaveBeenCalledWith(concatListPath, `file '${dissolvePath}'`);
+    expect(writeConcatList).not.toHaveBeenCalledWith(
+      concatListPath,
+      expect.stringContaining(`file '${segment1Path}'\nfile '${segment1Path}'`),
+    );
+    expect(executeFfmpeg).toHaveBeenCalledTimes(5);
+  });
+
   it("fails explicitly for non-dissolve transition operations", async () => {
     const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
     const renderer = new FFmpegRenderer({

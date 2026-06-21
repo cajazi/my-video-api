@@ -355,6 +355,107 @@ describe("processEditJob", () => {
     expect(dependencies.renderedOutputStorage.uploadRenderedOutput).toHaveBeenCalled();
   });
 
+  it("processes a V1 edit spec with chained dissolve transitions through the FFmpeg render path", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath: "C:\\tmp\\source.mp4",
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList: vi.fn().mockResolvedValue(undefined),
+      executeFfmpeg,
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1250),
+    });
+    const renderingService = new RenderingService(
+      {
+        editJob: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: validPayload.editJobId,
+            userId: validPayload.userId,
+            videoId: validPayload.videoId,
+            inputConfig: {
+              ...editSpec,
+              timeline: {
+                ...editSpec.timeline,
+                tracks: [
+                  {
+                    id: "track-1",
+                    type: "video",
+                    clips: [
+                      {
+                        id: "clip-1",
+                        assetId: "asset-1",
+                        videoId: validPayload.videoId,
+                        positionMs: 0,
+                        trimStartMs: 0,
+                        trimEndMs: 3000,
+                        durationMs: 3000,
+                      },
+                      {
+                        id: "clip-2",
+                        assetId: "asset-2",
+                        videoId: validPayload.videoId,
+                        positionMs: 3000,
+                        trimStartMs: 5000,
+                        trimEndMs: 9000,
+                        durationMs: 4000,
+                      },
+                      {
+                        id: "clip-3",
+                        assetId: "asset-3",
+                        videoId: validPayload.videoId,
+                        positionMs: 7000,
+                        trimStartMs: 12000,
+                        trimEndMs: 14000,
+                        durationMs: 2000,
+                      },
+                    ],
+                  },
+                ],
+                transitions: [
+                  {
+                    id: "transition-1",
+                    type: "dissolve",
+                    fromClipId: "clip-1",
+                    toClipId: "clip-2",
+                    durationMs: 1000,
+                  },
+                  {
+                    id: "transition-2",
+                    type: "dissolve",
+                    fromClipId: "clip-2",
+                    toClipId: "clip-3",
+                    durationMs: 500,
+                  },
+                ],
+              },
+            },
+          }),
+        },
+        video: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: validPayload.videoId,
+            ownerId: validPayload.userId,
+            storageKey: "source-media/user/source.mp4",
+          }),
+        },
+      },
+      renderer,
+    );
+    const dependencies = createDependencies({
+      renderEditJob: renderingService.renderEditJob.bind(renderingService),
+    });
+
+    await processEditJob(createJob(validPayload), dependencies);
+
+    expect(executeFfmpeg).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "-filter_complex",
+        "[0:v]scale=1080:1920,fps=60,format=yuv420p[v0];[1:v]scale=1080:1920,fps=60,format=yuv420p[v1];[2:v]scale=1080:1920,fps=60,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=1:offset=2[x1];[x1][v2]xfade=transition=fade:duration=0.5:offset=5.5[v]",
+      ]),
+    );
+    expect(dependencies.renderedOutputStorage.uploadRenderedOutput).toHaveBeenCalled();
+  });
+
   it("marks the job failed before rendering when stored export settings are invalid", async () => {
     const renderer = {
       render: vi.fn(),
