@@ -1,5 +1,6 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { createRenderOutputStorageKey } from "../storage/media-storage.paths";
 import { FFmpegRenderer } from "./ffmpeg.renderer";
 
 const editJobId = "0f6979d0-4db1-49f7-b99f-6f5b6f706286";
@@ -65,7 +66,8 @@ describe("FFmpegRenderer", () => {
       localOutputPath,
     ]);
     expect(result).toEqual({
-      outputStorageKey: `outputs/${userId}/${editJobId}.mp4`,
+      outputStorageKey: createRenderOutputStorageKey({ userId, editJobId }),
+      localOutputPath,
       durationMs: 750,
       metadata: {
         renderer: "ffmpeg",

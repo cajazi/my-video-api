@@ -10,6 +10,7 @@ export type RenderInput = {
 
 export type RenderResult = {
   outputStorageKey: string;
+  localOutputPath: string;
   durationMs: number;
   metadata?: Record<string, unknown>;
 };

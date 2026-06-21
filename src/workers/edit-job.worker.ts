@@ -6,6 +6,8 @@ import { env } from "../config/env";
 import { RenderingFactory } from "../modules/rendering/rendering.factory";
 import { RenderingService } from "../modules/rendering/rendering.service";
 import type { RenderResult } from "../modules/rendering/rendering.types";
+import { deleteEditJobWorkspace } from "../modules/rendering/workspace.util";
+import { RenderedOutputStorage } from "../modules/storage/rendered-output.storage";
 import {
   EDIT_JOB_PROCESS_NAME,
   EDIT_JOBS_QUEUE_NAME,
@@ -42,11 +44,17 @@ type EditJobRenderingService = {
   renderEditJob(editJobId: string): Promise<RenderResult>;
 };
 
+type EditJobRenderedOutputStorage = {
+  uploadRenderedOutput(input: { localOutputPath: string; storageKey: string }): Promise<{ storageKey: string }>;
+};
+
 type ProcessEditJobDependencies = {
   prisma: EditJobPersistence;
   renderingService: EditJobRenderingService;
+  renderedOutputStorage: EditJobRenderedOutputStorage;
   logger: StructuredLogger;
   now?: () => Date;
+  cleanupWorkspace?: (editJobId: string) => Promise<void>;
 };
 
 function buildPrismaConnectionString(databaseUrl: string) {
@@ -81,6 +89,7 @@ function createConsoleLogger(): StructuredLogger {
 export async function processEditJob(job: Job<EditJobQueuePayload>, dependencies: ProcessEditJobDependencies) {
   const payload = editJobQueuePayloadSchema.parse(job.data);
   const now = dependencies.now ?? (() => new Date());
+  const cleanupWorkspace = dependencies.cleanupWorkspace ?? deleteEditJobWorkspace;
   const logContext = {
     queueName: EDIT_JOBS_QUEUE_NAME,
     jobName: EDIT_JOB_PROCESS_NAME,
@@ -109,6 +118,10 @@ export async function processEditJob(job: Job<EditJobQueuePayload>, dependencies
 
   try {
     const renderResult = await dependencies.renderingService.renderEditJob(payload.editJobId);
+    const uploadedOutput = await dependencies.renderedOutputStorage.uploadRenderedOutput({
+      localOutputPath: renderResult.localOutputPath,
+      storageKey: renderResult.outputStorageKey,
+    });
 
     await dependencies.prisma.editJob.update({
       where: {
@@ -116,7 +129,7 @@ export async function processEditJob(job: Job<EditJobQueuePayload>, dependencies
       },
       data: {
         status: EditJobStatus.COMPLETED,
-        outputStorageKey: renderResult.outputStorageKey,
+        outputStorageKey: uploadedOutput.storageKey,
         completedAt: now(),
         errorMessage: null,
       },
@@ -145,6 +158,16 @@ export async function processEditJob(job: Job<EditJobQueuePayload>, dependencies
     });
 
     throw error;
+  } finally {
+    try {
+      await cleanupWorkspace(payload.editJobId);
+    } catch (error) {
+      dependencies.logger.error({
+        event: "edit_job.workspace_cleanup_failed",
+        errorMessage: serializeError(error),
+        ...logContext,
+      });
+    }
   }
 }
 
@@ -158,12 +181,14 @@ export async function startEditJobWorker() {
   });
   const logger = createConsoleLogger();
   const renderingService = await new RenderingFactory(prisma, env.RENDERER_PROVIDER).createRenderingService();
+  const renderedOutputStorage = new RenderedOutputStorage();
   const worker = new Worker<EditJobQueuePayload, void, typeof EDIT_JOB_PROCESS_NAME>(
     EDIT_JOBS_QUEUE_NAME,
     async (job) => {
       await processEditJob(job, {
         prisma,
         renderingService,
+        renderedOutputStorage,
         logger,
       });
     },
