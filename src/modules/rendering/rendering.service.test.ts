@@ -9,9 +9,18 @@ const userId = "c6218031-5061-4f49-a9fc-14f7f06798d0";
 const videoId = "b5ff818d-5a1c-4bc0-9288-2a05377a8e58";
 const sourceStorageKey = "uploads/source.mp4";
 const outputStorageKey = createRenderOutputStorageKey({ userId, editJobId });
+const exportSettings = {
+  resolutionPreset: "720p",
+  width: 720,
+  height: 1280,
+  aspectRatio: "9:16",
+  fps: 24,
+  backgroundFillColor: "#111111",
+} as const;
 const editSpec = {
   version: "1",
   timeline: {
+    exportSettings,
     tracks: [
       {
         id: "track-1",
@@ -117,9 +126,11 @@ describe("RenderingService", () => {
       videoId,
       inputConfig: {
         type: "timeline-render-plan-v1",
+        exportSettings,
         segments: [
           {
             type: "clip",
+            exportSettings,
             clipId: "clip-1",
             sourceVideoId: videoId,
             timelineStartMs: 0,
@@ -130,6 +141,7 @@ describe("RenderingService", () => {
           },
           {
             type: "clip",
+            exportSettings,
             clipId: "clip-2",
             sourceVideoId: videoId,
             timelineStartMs: 4500,

@@ -6,9 +6,18 @@ import { EditJobsService } from "./edit-jobs.service";
 const userId = "c6218031-5061-4f49-a9fc-14f7f06798d0";
 const videoId = "b5ff818d-5a1c-4bc0-9288-2a05377a8e58";
 const editJobId = "0f6979d0-4db1-49f7-b99f-6f5b6f706286";
+const exportSettings = {
+  resolutionPreset: "1080p" as const,
+  width: 1080,
+  height: 1920,
+  aspectRatio: "9:16" as const,
+  fps: 30 as const,
+  backgroundFillColor: "#000000",
+};
 const editSpec = {
   version: "1" as const,
   timeline: {
+    exportSettings,
     tracks: [
       {
         id: "track-1",

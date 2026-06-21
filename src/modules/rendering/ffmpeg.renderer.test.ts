@@ -7,6 +7,14 @@ const editJobId = "0f6979d0-4db1-49f7-b99f-6f5b6f706286";
 const userId = "c6218031-5061-4f49-a9fc-14f7f06798d0";
 const videoId = "b5ff818d-5a1c-4bc0-9288-2a05377a8e58";
 const localTestVideoPath = "C:\\tmp\\sample.mp4";
+const exportSettings = {
+  resolutionPreset: "1080p",
+  width: 1080,
+  height: 1920,
+  aspectRatio: "9:16",
+  fps: 60,
+  backgroundFillColor: "#123abc",
+} as const;
 
 function createInput(overrides: { startMs?: number; endMs?: number; segments?: unknown[] } = {}) {
   return {
@@ -16,11 +24,13 @@ function createInput(overrides: { startMs?: number; endMs?: number; segments?: u
     sourceStorageKey: "uploads/source.mp4",
     inputConfig: {
       type: "timeline-render-plan-v1",
+      exportSettings,
       segments:
         overrides.segments ??
         [
           {
             type: "clip",
+            exportSettings,
             clipId: "clip-1",
             sourceVideoId: videoId,
             timelineStartMs: 0,
@@ -35,7 +45,7 @@ function createInput(overrides: { startMs?: number; endMs?: number; segments?: u
 }
 
 describe("FFmpegRenderer", () => {
-  it("fails for invalid trim ranges", async () => {
+  it("fails for invalid render plans", async () => {
     const renderer = new FFmpegRenderer({
       localTestVideoPath,
       checkAvailability: vi.fn().mockResolvedValue(true),
@@ -47,13 +57,11 @@ describe("FFmpegRenderer", () => {
       renderer.render({
         ...createInput(),
         inputConfig: {
-          trim: {
-            start: 5,
-            end: 5,
-          },
+          type: "timeline-render-plan-v1",
+          segments: [],
         },
       }),
-    ).rejects.toThrow("Invalid trim range: trim.start must be less than trim.end");
+    ).rejects.toThrow();
   });
 
   it("creates the workspace, trims one segment, and concatenates the final output", async () => {
@@ -97,8 +105,13 @@ describe("FFmpegRenderer", () => {
       "0",
       "-i",
       concatListPath,
-      "-c",
-      "copy",
+      "-vf",
+      "scale=1080:1920,fps=60",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      "-an",
       localOutputPath,
     ]);
     expect(result).toEqual({
@@ -135,6 +148,7 @@ describe("FFmpegRenderer", () => {
         segments: [
           {
             type: "clip",
+            exportSettings,
             clipId: "clip-1",
             sourceVideoId: videoId,
             timelineStartMs: 0,
@@ -145,6 +159,7 @@ describe("FFmpegRenderer", () => {
           },
           {
             type: "clip",
+            exportSettings,
             clipId: "clip-2",
             sourceVideoId: videoId,
             timelineStartMs: 1500,
@@ -168,7 +183,15 @@ describe("FFmpegRenderer", () => {
     expect(writeConcatList).toHaveBeenCalledWith(concatListPath, `file '${segment0Path}'\nfile '${segment1Path}'`);
     expect(executeFfmpeg).toHaveBeenNthCalledWith(
       3,
-      expect.arrayContaining(["-f", "concat", "-i", concatListPath, path.join(workspacePath, "output.mp4")]),
+      expect.arrayContaining([
+        "-f",
+        "concat",
+        "-i",
+        concatListPath,
+        "-vf",
+        "scale=1080:1920,fps=60",
+        path.join(workspacePath, "output.mp4"),
+      ]),
     );
   });
 
@@ -191,6 +214,7 @@ describe("FFmpegRenderer", () => {
         segments: [
           {
             type: "clip",
+            exportSettings,
             clipId: "clip-1",
             sourceVideoId: videoId,
             timelineStartMs: 0,
@@ -201,17 +225,19 @@ describe("FFmpegRenderer", () => {
           },
           {
             type: "filler",
+            exportSettings,
             fillerId: "gap-1",
             timelineStartMs: 1000,
             timelineEndMs: 2500,
             durationMs: 1500,
             fill: {
               kind: "black",
-              color: "#000000",
+              color: "#123abc",
             },
           },
           {
             type: "clip",
+            exportSettings,
             clipId: "clip-2",
             sourceVideoId: videoId,
             timelineStartMs: 2500,
@@ -229,7 +255,7 @@ describe("FFmpegRenderer", () => {
       "-f",
       "lavfi",
       "-i",
-      "color=c=black:s=1280x720:r=30:d=1.5",
+      "color=c=0x123abc:s=1080x1920:r=60:d=1.5",
       "-an",
       "-c:v",
       "libx264",
