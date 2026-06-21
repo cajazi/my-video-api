@@ -57,14 +57,15 @@ export class FFmpegRenderer implements Renderer {
     const startedAt = this.now();
     const workspacePath = getEditJobWorkspacePath(input.editJobId);
     const localOutputPath = path.join(workspacePath, "output.mp4");
-    const segmentOutputPaths = renderPlan.segments.map((_, index) =>
+    const mediaSegments = renderPlan.segments.filter((segment) => segment.type !== "transition");
+    const segmentOutputPaths = mediaSegments.map((_, index) =>
       path.join(workspacePath, `segment-${String(index).padStart(3, "0")}.mp4`),
     );
     const concatListPath = path.join(workspacePath, "concat-list.txt");
 
     await this.createWorkspace(workspacePath);
 
-    for (const [index, segment] of renderPlan.segments.entries()) {
+    for (const [index, segment] of mediaSegments.entries()) {
       await this.renderSegment(localTestVideoPath, segment, segmentOutputPaths[index]);
     }
 
@@ -90,6 +91,10 @@ export class FFmpegRenderer implements Renderer {
   private async renderSegment(sourcePath: string, segment: TimelineRenderSegment, outputPath: string) {
     if (segment.type === "filler") {
       await this.renderBlackFiller(segment, outputPath);
+      return;
+    }
+
+    if (segment.type === "transition") {
       return;
     }
 

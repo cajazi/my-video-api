@@ -265,6 +265,73 @@ describe("FFmpegRenderer", () => {
     ]);
   });
 
+  it("ignores transition operations without changing physical concat output", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const writeConcatList = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList,
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
+    });
+    const workspacePath = path.resolve(process.cwd(), "tmp", "jobs", editJobId);
+    const segment0Path = path.join(workspacePath, "segment-000.mp4");
+    const segment1Path = path.join(workspacePath, "segment-001.mp4");
+    const concatListPath = path.join(workspacePath, "concat-list.txt");
+
+    await renderer.render(
+      createInput({
+        segments: [
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-1",
+            sourceVideoId: videoId,
+            timelineStartMs: 0,
+            timelineEndMs: 2000,
+            trimStartMs: 0,
+            trimEndMs: 2000,
+            durationMs: 2000,
+          },
+          {
+            type: "transition",
+            exportSettings,
+            transitionId: "transition-1",
+            transitionType: "dissolve",
+            fromClipId: "clip-1",
+            toClipId: "clip-2",
+            timelineStartMs: 2000,
+            durationMs: 500,
+          },
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-2",
+            sourceVideoId: videoId,
+            timelineStartMs: 2000,
+            timelineEndMs: 4000,
+            trimStartMs: 5000,
+            trimEndMs: 7000,
+            durationMs: 2000,
+          },
+        ],
+      }),
+    );
+
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      1,
+      expect.arrayContaining(["-ss", "0", "-to", "2", segment0Path]),
+    );
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      2,
+      expect.arrayContaining(["-ss", "5", "-to", "7", segment1Path]),
+    );
+    expect(writeConcatList).toHaveBeenCalledWith(concatListPath, `file '${segment0Path}'\nfile '${segment1Path}'`);
+    expect(executeFfmpeg).toHaveBeenCalledTimes(3);
+  });
+
   it("fails when ffmpeg is missing", async () => {
     const renderer = new FFmpegRenderer({
       localTestVideoPath,
