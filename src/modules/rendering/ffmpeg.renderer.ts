@@ -5,7 +5,11 @@ import type { Renderer } from "./renderer.interface";
 import type { RenderInput } from "./rendering.types";
 import { createRenderOutputStorageKey } from "../storage/media-storage.paths";
 import { checkFfmpegAvailability, runFfmpeg } from "./ffmpeg.utils";
-import { timelineRenderPlanSchema, type TimelineRenderPlan, type TimelineRenderSegment } from "./timeline-render-plan";
+import {
+  timelineRenderPlanSchema,
+  type TimelineRenderPlan,
+  type TimelineRenderSegment,
+} from "./timeline-render-plan";
 import { getEditJobWorkspacePath } from "./workspace.util";
 
 const trimConfigSchema = z.object({
@@ -68,7 +72,7 @@ export class FFmpegRenderer implements Renderer {
     await this.createWorkspace(workspacePath);
 
     for (const [index, segment] of renderPlan.segments.entries()) {
-      await this.trimSegment(localTestVideoPath, segment, segmentOutputPaths[index]);
+      await this.renderSegment(localTestVideoPath, segment, segmentOutputPaths[index]);
     }
 
     await this.writeConcatList(concatListPath, this.createConcatList(segmentOutputPaths));
@@ -110,12 +114,26 @@ export class FFmpegRenderer implements Renderer {
           trimStartMs: Math.round(trimConfig.trim.start * 1000),
           trimEndMs: Math.round(trimConfig.trim.end * 1000),
           durationMs: Math.round((trimConfig.trim.end - trimConfig.trim.start) * 1000),
+          type: "clip",
         },
       ],
     };
   }
 
-  private async trimSegment(sourcePath: string, segment: TimelineRenderSegment, outputPath: string) {
+  private async renderSegment(sourcePath: string, segment: TimelineRenderSegment, outputPath: string) {
+    if (segment.type === "filler") {
+      await this.renderBlackFiller(segment, outputPath);
+      return;
+    }
+
+    await this.trimSegment(sourcePath, segment, outputPath);
+  }
+
+  private async trimSegment(
+    sourcePath: string,
+    segment: Extract<TimelineRenderSegment, { type: "clip" }>,
+    outputPath: string,
+  ) {
     await this.executeFfmpeg([
       "-y",
       "-i",
@@ -126,6 +144,22 @@ export class FFmpegRenderer implements Renderer {
       String(segment.trimEndMs / 1000),
       "-c",
       "copy",
+      outputPath,
+    ]);
+  }
+
+  private async renderBlackFiller(segment: Extract<TimelineRenderSegment, { type: "filler" }>, outputPath: string) {
+    await this.executeFfmpeg([
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      `color=c=black:s=1280x720:r=30:d=${segment.durationMs / 1000}`,
+      "-an",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
       outputPath,
     ]);
   }

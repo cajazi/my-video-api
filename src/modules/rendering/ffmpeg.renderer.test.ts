@@ -20,6 +20,7 @@ function createInput(overrides: { startMs?: number; endMs?: number; segments?: u
         overrides.segments ??
         [
           {
+            type: "clip",
             clipId: "clip-1",
             sourceVideoId: videoId,
             timelineStartMs: 0,
@@ -133,6 +134,7 @@ describe("FFmpegRenderer", () => {
       createInput({
         segments: [
           {
+            type: "clip",
             clipId: "clip-1",
             sourceVideoId: videoId,
             timelineStartMs: 0,
@@ -142,6 +144,7 @@ describe("FFmpegRenderer", () => {
             durationMs: 1500,
           },
           {
+            type: "clip",
             clipId: "clip-2",
             sourceVideoId: videoId,
             timelineStartMs: 1500,
@@ -167,6 +170,73 @@ describe("FFmpegRenderer", () => {
       3,
       expect.arrayContaining(["-f", "concat", "-i", concatListPath, path.join(workspacePath, "output.mp4")]),
     );
+  });
+
+  it("creates black filler segments for timeline gaps", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const writeConcatList = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList,
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
+    });
+    const workspacePath = path.resolve(process.cwd(), "tmp", "jobs", editJobId);
+    const fillerPath = path.join(workspacePath, "segment-001.mp4");
+
+    await renderer.render(
+      createInput({
+        segments: [
+          {
+            type: "clip",
+            clipId: "clip-1",
+            sourceVideoId: videoId,
+            timelineStartMs: 0,
+            timelineEndMs: 1000,
+            trimStartMs: 0,
+            trimEndMs: 1000,
+            durationMs: 1000,
+          },
+          {
+            type: "filler",
+            fillerId: "gap-1",
+            timelineStartMs: 1000,
+            timelineEndMs: 2500,
+            durationMs: 1500,
+            fill: {
+              kind: "black",
+              color: "#000000",
+            },
+          },
+          {
+            type: "clip",
+            clipId: "clip-2",
+            sourceVideoId: videoId,
+            timelineStartMs: 2500,
+            timelineEndMs: 3500,
+            trimStartMs: 5000,
+            trimEndMs: 6000,
+            durationMs: 1000,
+          },
+        ],
+      }),
+    );
+
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(2, [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=black:s=1280x720:r=30:d=1.5",
+      "-an",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      fillerPath,
+    ]);
   });
 
   it("fails when ffmpeg is missing", async () => {

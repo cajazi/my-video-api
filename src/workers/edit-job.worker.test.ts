@@ -39,6 +39,15 @@ const editSpec = {
             trimEndMs: 4000,
             durationMs: 2500,
           },
+          {
+            id: "clip-2",
+            assetId: "asset-2",
+            videoId: validPayload.videoId,
+            positionMs: 4000,
+            trimStartMs: 8000,
+            trimEndMs: 9000,
+            durationMs: 1000,
+          },
         ],
       },
     ],
@@ -202,12 +211,13 @@ describe("processEditJob", () => {
     expect(dependencies.cleanupWorkspace).toHaveBeenCalledWith(validPayload.editJobId);
   });
 
-  it("processes a V1 edit spec through the existing FFmpeg trim path", async () => {
+  it("processes a V1 edit spec with a timeline gap through the FFmpeg render path", async () => {
     const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
     const renderer = new FFmpegRenderer({
       localTestVideoPath: "C:\\tmp\\source.mp4",
       checkAvailability: vi.fn().mockResolvedValue(true),
       createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList: vi.fn().mockResolvedValue(undefined),
       executeFfmpeg,
       now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1250),
     });
@@ -238,6 +248,10 @@ describe("processEditJob", () => {
     await processEditJob(createJob(validPayload), dependencies);
 
     expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["-ss", "1.5", "-to", "4"]));
+    expect(executeFfmpeg).toHaveBeenCalledWith(
+      expect.arrayContaining(["-i", "color=c=black:s=1280x720:r=30:d=1.5"]),
+    );
+    expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["-ss", "8", "-to", "9"]));
     expect(dependencies.renderedOutputStorage.uploadRenderedOutput).toHaveBeenCalledWith({
       localOutputPath: expect.stringMatching(/tmp[\\/]jobs[\\/]0f6979d0-4db1-49f7-b99f-6f5b6f706286[\\/]output.mp4$/),
       storageKey: outputStorageKey,

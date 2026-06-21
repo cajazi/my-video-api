@@ -119,6 +119,7 @@ describe("RenderingService", () => {
         type: "timeline-render-plan-v1",
         segments: [
           {
+            type: "clip",
             clipId: "clip-1",
             sourceVideoId: videoId,
             timelineStartMs: 0,
@@ -128,6 +129,7 @@ describe("RenderingService", () => {
             durationMs: 4500,
           },
           {
+            type: "clip",
             clipId: "clip-2",
             sourceVideoId: videoId,
             timelineStartMs: 4500,
