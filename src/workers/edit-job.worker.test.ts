@@ -1,6 +1,8 @@
 import { EditJobStatus } from "@prisma/client";
 import type { Job } from "bullmq";
 import { describe, expect, it, vi } from "vitest";
+import { FFmpegRenderer } from "../modules/rendering/ffmpeg.renderer";
+import { RenderingService } from "../modules/rendering/rendering.service";
 import { createRenderOutputStorageKey } from "../modules/storage/media-storage.paths";
 import type { EditJobQueuePayload } from "../queues/queue.constants";
 import { processEditJob } from "./edit-job.worker";
@@ -20,6 +22,28 @@ function createJob(data: unknown): Job<EditJobQueuePayload> {
 
 const outputStorageKey = createRenderOutputStorageKey(validPayload);
 const localOutputPath = "C:\\tmp\\jobs\\0f6979d0-4db1-49f7-b99f-6f5b6f706286\\output.mp4";
+const editSpec = {
+  version: "1",
+  timeline: {
+    tracks: [
+      {
+        id: "track-1",
+        type: "video",
+        clips: [
+          {
+            id: "clip-1",
+            assetId: "asset-1",
+            videoId: validPayload.videoId,
+            positionMs: 2500,
+            trimStartMs: 1500,
+            trimEndMs: 4000,
+            durationMs: 2500,
+          },
+        ],
+      },
+    ],
+  },
+};
 
 function createDependencies(
   overrides: {
@@ -176,5 +200,47 @@ describe("processEditJob", () => {
       }),
     );
     expect(dependencies.cleanupWorkspace).toHaveBeenCalledWith(validPayload.editJobId);
+  });
+
+  it("processes a V1 edit spec through the existing FFmpeg trim path", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath: "C:\\tmp\\source.mp4",
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      executeFfmpeg,
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1250),
+    });
+    const renderingService = new RenderingService(
+      {
+        editJob: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: validPayload.editJobId,
+            userId: validPayload.userId,
+            videoId: validPayload.videoId,
+            inputConfig: editSpec,
+          }),
+        },
+        video: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: validPayload.videoId,
+            ownerId: validPayload.userId,
+            storageKey: "source-media/user/source.mp4",
+          }),
+        },
+      },
+      renderer,
+    );
+    const dependencies = createDependencies({
+      renderEditJob: renderingService.renderEditJob.bind(renderingService),
+    });
+
+    await processEditJob(createJob(validPayload), dependencies);
+
+    expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["-ss", "1.5", "-to", "4"]));
+    expect(dependencies.renderedOutputStorage.uploadRenderedOutput).toHaveBeenCalledWith({
+      localOutputPath: expect.stringMatching(/tmp[\\/]jobs[\\/]0f6979d0-4db1-49f7-b99f-6f5b6f706286[\\/]output.mp4$/),
+      storageKey: outputStorageKey,
+    });
   });
 });

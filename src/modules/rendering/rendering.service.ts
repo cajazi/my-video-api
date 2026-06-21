@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { Renderer } from "./renderer.interface";
 import type { RenderResult } from "./rendering.types";
+import { createTrimInputFromEditSpecV1, editSpecV1Schema } from "../edit-specs/edit-spec-v1.schema";
 
 const EDIT_JOB_NOT_FOUND_MESSAGE = "Edit job not found";
 const VIDEO_NOT_FOUND_MESSAGE = "Video not found";
@@ -50,11 +51,14 @@ export class RenderingService {
       throw new Error(OWNERSHIP_MISMATCH_MESSAGE);
     }
 
+    const editSpec = editSpecV1Schema.parse(editJob.inputConfig);
+    const rendererInputConfig = createTrimInputFromEditSpecV1(editSpec);
+
     return this.renderer.render({
       editJobId: editJob.id,
       userId: editJob.userId,
       videoId: editJob.videoId,
-      inputConfig: editJob.inputConfig as Prisma.JsonValue,
+      inputConfig: rendererInputConfig as Prisma.JsonValue,
       sourceStorageKey: video.storageKey,
     });
   }

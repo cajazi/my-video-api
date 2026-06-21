@@ -9,6 +9,28 @@ const userId = "c6218031-5061-4f49-a9fc-14f7f06798d0";
 const videoId = "b5ff818d-5a1c-4bc0-9288-2a05377a8e58";
 const sourceStorageKey = "uploads/source.mp4";
 const outputStorageKey = createRenderOutputStorageKey({ userId, editJobId });
+const editSpec = {
+  version: "1",
+  timeline: {
+    tracks: [
+      {
+        id: "track-1",
+        type: "video",
+        clips: [
+          {
+            id: "clip-1",
+            assetId: "asset-1",
+            videoId,
+            positionMs: 15000,
+            trimStartMs: 2000,
+            trimEndMs: 6500,
+            durationMs: 4500,
+          },
+        ],
+      },
+    ],
+  },
+};
 
 function createPrismaMock(overrides: { videoOwnerId?: string } = {}) {
   return {
@@ -17,12 +39,7 @@ function createPrismaMock(overrides: { videoOwnerId?: string } = {}) {
         id: editJobId,
         userId,
         videoId,
-        inputConfig: {
-          trim: {
-            start: 0,
-            end: 5,
-          },
-        },
+        inputConfig: editSpec,
       }),
     },
     video: {
@@ -58,7 +75,7 @@ describe("MockRenderer", () => {
 });
 
 describe("RenderingService", () => {
-  it("loads edit job and video then calls the renderer", async () => {
+  it("loads edit spec and converts the first timeline clip to renderer trim input", async () => {
     const prisma = createPrismaMock();
     const renderer: Renderer = {
       render: vi.fn().mockResolvedValue({
@@ -91,8 +108,8 @@ describe("RenderingService", () => {
       videoId,
       inputConfig: {
         trim: {
-          start: 0,
-          end: 5,
+          start: 2,
+          end: 6.5,
         },
       },
       sourceStorageKey,
