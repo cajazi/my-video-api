@@ -1,23 +1,16 @@
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
-import { z } from "zod";
 import type { Renderer } from "./renderer.interface";
 import type { RenderInput } from "./rendering.types";
 import { createRenderOutputStorageKey } from "../storage/media-storage.paths";
 import { checkFfmpegAvailability, runFfmpeg } from "./ffmpeg.utils";
 import {
+  type TimelineExportSettings,
   timelineRenderPlanSchema,
   type TimelineRenderPlan,
   type TimelineRenderSegment,
 } from "./timeline-render-plan";
 import { getEditJobWorkspacePath } from "./workspace.util";
-
-const trimConfigSchema = z.object({
-  trim: z.object({
-    start: z.number().finite().nonnegative(),
-    end: z.number().finite().positive(),
-  }),
-});
 
 type FFmpegRendererDependencies = {
   localTestVideoPath: string;
@@ -76,7 +69,7 @@ export class FFmpegRenderer implements Renderer {
     }
 
     await this.writeConcatList(concatListPath, this.createConcatList(segmentOutputPaths));
-    await this.concatSegments(concatListPath, localOutputPath);
+    await this.concatSegments(concatListPath, localOutputPath, renderPlan.exportSettings);
 
     return {
       outputStorageKey: createRenderOutputStorageKey(input),
@@ -91,33 +84,7 @@ export class FFmpegRenderer implements Renderer {
   }
 
   private parseRenderPlan(inputConfig: RenderInput["inputConfig"]): TimelineRenderPlan {
-    const timelineRenderPlan = timelineRenderPlanSchema.safeParse(inputConfig);
-
-    if (timelineRenderPlan.success) {
-      return timelineRenderPlan.data;
-    }
-
-    const trimConfig = trimConfigSchema.parse(inputConfig);
-
-    if (trimConfig.trim.start >= trimConfig.trim.end) {
-      throw new Error("Invalid trim range: trim.start must be less than trim.end");
-    }
-
-    return {
-      type: "timeline-render-plan-v1",
-      segments: [
-        {
-          clipId: "legacy-trim",
-          sourceVideoId: "00000000-0000-0000-0000-000000000000",
-          timelineStartMs: 0,
-          timelineEndMs: Math.round((trimConfig.trim.end - trimConfig.trim.start) * 1000),
-          trimStartMs: Math.round(trimConfig.trim.start * 1000),
-          trimEndMs: Math.round(trimConfig.trim.end * 1000),
-          durationMs: Math.round((trimConfig.trim.end - trimConfig.trim.start) * 1000),
-          type: "clip",
-        },
-      ],
-    };
+    return timelineRenderPlanSchema.parse(inputConfig);
   }
 
   private async renderSegment(sourcePath: string, segment: TimelineRenderSegment, outputPath: string) {
@@ -149,12 +116,15 @@ export class FFmpegRenderer implements Renderer {
   }
 
   private async renderBlackFiller(segment: Extract<TimelineRenderSegment, { type: "filler" }>, outputPath: string) {
+    const { width, height, fps } = segment.exportSettings;
+    const color = segment.fill.color.replace("#", "0x");
+
     await this.executeFfmpeg([
       "-y",
       "-f",
       "lavfi",
       "-i",
-      `color=c=black:s=1280x720:r=30:d=${segment.durationMs / 1000}`,
+      `color=c=${color}:s=${width}x${height}:r=${fps}:d=${segment.durationMs / 1000}`,
       "-an",
       "-c:v",
       "libx264",
@@ -164,8 +134,28 @@ export class FFmpegRenderer implements Renderer {
     ]);
   }
 
-  private async concatSegments(concatListPath: string, outputPath: string) {
-    await this.executeFfmpeg(["-y", "-f", "concat", "-safe", "0", "-i", concatListPath, "-c", "copy", outputPath]);
+  private async concatSegments(
+    concatListPath: string,
+    outputPath: string,
+    exportSettings: TimelineExportSettings,
+  ) {
+    await this.executeFfmpeg([
+      "-y",
+      "-f",
+      "concat",
+      "-safe",
+      "0",
+      "-i",
+      concatListPath,
+      "-vf",
+      `scale=${exportSettings.width}:${exportSettings.height},fps=${exportSettings.fps}`,
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      "-an",
+      outputPath,
+    ]);
   }
 
   private createConcatList(segmentOutputPaths: string[]) {

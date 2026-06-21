@@ -22,9 +22,18 @@ function createJob(data: unknown): Job<EditJobQueuePayload> {
 
 const outputStorageKey = createRenderOutputStorageKey(validPayload);
 const localOutputPath = "C:\\tmp\\jobs\\0f6979d0-4db1-49f7-b99f-6f5b6f706286\\output.mp4";
+const exportSettings = {
+  resolutionPreset: "1080p",
+  width: 1080,
+  height: 1920,
+  aspectRatio: "9:16",
+  fps: 60,
+  backgroundFillColor: "#223344",
+} as const;
 const editSpec = {
   version: "1",
   timeline: {
+    exportSettings,
     tracks: [
       {
         id: "track-1",
@@ -249,7 +258,7 @@ describe("processEditJob", () => {
 
     expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["-ss", "1.5", "-to", "4"]));
     expect(executeFfmpeg).toHaveBeenCalledWith(
-      expect.arrayContaining(["-i", "color=c=black:s=1280x720:r=30:d=1.5"]),
+      expect.arrayContaining(["-i", "color=c=0x223344:s=1080x1920:r=60:d=1.5"]),
     );
     expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["-ss", "8", "-to", "9"]));
     expect(dependencies.renderedOutputStorage.uploadRenderedOutput).toHaveBeenCalledWith({

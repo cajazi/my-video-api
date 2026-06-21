@@ -3,12 +3,21 @@ import { editSpecV1Schema } from "../edit-specs/edit-spec-v1.schema";
 import { createTimelineRenderPlan } from "./timeline-render-plan";
 
 const videoId = "0f6979d0-4db1-49f7-b99f-6f5b6f706286";
+const exportSettings = {
+  resolutionPreset: "1080p",
+  width: 1920,
+  height: 1080,
+  aspectRatio: "16:9",
+  fps: 60,
+  backgroundFillColor: "#223344",
+} as const;
 
 describe("createTimelineRenderPlan", () => {
   it("translates timeline clips to render segments without mixing timeline position and source trim", () => {
     const editSpec = editSpecV1Schema.parse({
       version: "1",
       timeline: {
+        exportSettings,
         tracks: [
           {
             id: "track-1",
@@ -40,9 +49,11 @@ describe("createTimelineRenderPlan", () => {
 
     expect(createTimelineRenderPlan(editSpec)).toEqual({
       type: "timeline-render-plan-v1",
+      exportSettings,
       segments: [
         {
           type: "clip",
+          exportSettings,
           clipId: "clip-1",
           sourceVideoId: videoId,
           timelineStartMs: 0,
@@ -53,6 +64,7 @@ describe("createTimelineRenderPlan", () => {
         },
         {
           type: "clip",
+          exportSettings,
           clipId: "clip-2",
           sourceVideoId: videoId,
           timelineStartMs: 3000,
@@ -69,6 +81,7 @@ describe("createTimelineRenderPlan", () => {
     const editSpec = editSpecV1Schema.parse({
       version: "1",
       timeline: {
+        exportSettings,
         tracks: [
           {
             id: "track-1",
@@ -101,23 +114,26 @@ describe("createTimelineRenderPlan", () => {
     expect(createTimelineRenderPlan(editSpec).segments).toEqual([
       expect.objectContaining({
         type: "clip",
+        exportSettings,
         clipId: "clip-1",
         timelineStartMs: 0,
         timelineEndMs: 1000,
       }),
       {
         type: "filler",
+        exportSettings,
         fillerId: "gap-1",
         timelineStartMs: 1000,
         timelineEndMs: 2500,
         durationMs: 1500,
         fill: {
           kind: "black",
-          color: "#000000",
+          color: "#223344",
         },
       },
       expect.objectContaining({
         type: "clip",
+        exportSettings,
         clipId: "clip-2",
         timelineStartMs: 2500,
         timelineEndMs: 3500,

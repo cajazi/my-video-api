@@ -1,6 +1,34 @@
 import { z } from "zod";
 
 export const EDIT_SPEC_V1_VERSION = "1";
+export const EXPORT_RESOLUTION_PRESETS = ["720p", "1080p", "4K"] as const;
+export const EXPORT_ASPECT_RATIOS = ["9:16", "16:9", "1:1", "4:5"] as const;
+export const EXPORT_FPS_VALUES = [24, 30, 60] as const;
+
+const exportSettingsSchema = z
+  .object({
+    resolutionPreset: z.enum(EXPORT_RESOLUTION_PRESETS),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+    aspectRatio: z.enum(EXPORT_ASPECT_RATIOS),
+    fps: z.union([z.literal(24), z.literal(30), z.literal(60)]),
+    backgroundFillColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  })
+  .superRefine((settings, context) => {
+    const expectedLongEdgeByPreset = {
+      "720p": 1280,
+      "1080p": 1920,
+      "4K": 3840,
+    } satisfies Record<(typeof EXPORT_RESOLUTION_PRESETS)[number], number>;
+
+    if (Math.max(settings.width, settings.height) !== expectedLongEdgeByPreset[settings.resolutionPreset]) {
+      context.addIssue({
+        code: "custom",
+        message: "width and height must match resolutionPreset long edge",
+        path: ["resolutionPreset"],
+      });
+    }
+  });
 
 const clipTimingSchema = z
   .object({
@@ -40,6 +68,7 @@ export const editSpecV1Schema = z
   .object({
     version: z.literal(EDIT_SPEC_V1_VERSION),
     timeline: z.object({
+      exportSettings: exportSettingsSchema,
       tracks: z.array(videoTrackSchema).length(1),
     }),
   })
@@ -79,6 +108,7 @@ export const editSpecV1Schema = z
 
 export type EditSpecV1 = z.infer<typeof editSpecV1Schema>;
 export type EditSpecV1Clip = EditSpecV1["timeline"]["tracks"][number]["clips"][number];
+export type EditSpecV1ExportSettings = EditSpecV1["timeline"]["exportSettings"];
 export type EditSpecV1RenderSegment = {
   type: "clip";
   clipId: string;
@@ -89,28 +119,6 @@ export type EditSpecV1RenderSegment = {
   trimEndMs: number;
   durationMs: number;
 };
-
-export function getFirstVideoClip(editSpec: EditSpecV1): EditSpecV1Clip {
-  const firstTrack = editSpec.timeline.tracks[0];
-  const firstClip = firstTrack?.clips[0];
-
-  if (!firstClip) {
-    throw new Error("Edit spec V1 requires at least one video clip");
-  }
-
-  return firstClip;
-}
-
-export function createTrimInputFromEditSpecV1(editSpec: EditSpecV1) {
-  const firstClip = getFirstVideoClip(editSpec);
-
-  return {
-    trim: {
-      start: firstClip.trimStartMs / 1000,
-      end: firstClip.trimEndMs / 1000,
-    },
-  };
-}
 
 export function createRenderSegmentsFromEditSpecV1(editSpec: EditSpecV1): EditSpecV1RenderSegment[] {
   return editSpec.timeline.tracks[0].clips.map((clip) => ({

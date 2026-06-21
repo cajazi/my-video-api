@@ -2,6 +2,14 @@ import { describe, expect, it } from "vitest";
 import { createEditJobSchema } from "./edit-jobs.schemas";
 
 const videoId = "0f6979d0-4db1-49f7-b99f-6f5b6f706286";
+const exportSettings = {
+  resolutionPreset: "1080p",
+  width: 1920,
+  height: 1080,
+  aspectRatio: "16:9",
+  fps: 30,
+  backgroundFillColor: "#101820",
+};
 
 function createClip(overrides: Record<string, unknown> = {}) {
   return {
@@ -20,6 +28,7 @@ function createValidEditSpec(clips: Record<string, unknown>[] = [createClip()]) 
   return {
     version: "1",
     timeline: {
+      exportSettings,
       tracks: [
         {
           id: "track-1",
@@ -39,6 +48,54 @@ describe("createEditJobSchema", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+
+  it("accepts valid export settings", () => {
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(),
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.editSpec.timeline.exportSettings).toEqual(exportSettings);
+    }
+  });
+
+  it("rejects invalid fps values", () => {
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: {
+        ...createValidEditSpec(),
+        timeline: {
+          ...createValidEditSpec().timeline,
+          exportSettings: {
+            ...exportSettings,
+            fps: 25,
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects invalid aspect ratios", () => {
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: {
+        ...createValidEditSpec(),
+        timeline: {
+          ...createValidEditSpec().timeline,
+          exportSettings: {
+            ...exportSettings,
+            aspectRatio: "3:2",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
   });
 
   it("accepts multiple sequential clips on a single video track", () => {
