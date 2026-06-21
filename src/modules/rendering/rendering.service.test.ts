@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createRenderOutputStorageKey } from "../storage/media-storage.paths";
 import { MockRenderer } from "./mock.renderer";
 import type { Renderer } from "./renderer.interface";
 import { RenderingService } from "./rendering.service";
@@ -7,6 +8,7 @@ const editJobId = "0f6979d0-4db1-49f7-b99f-6f5b6f706286";
 const userId = "c6218031-5061-4f49-a9fc-14f7f06798d0";
 const videoId = "b5ff818d-5a1c-4bc0-9288-2a05377a8e58";
 const sourceStorageKey = "uploads/source.mp4";
+const outputStorageKey = createRenderOutputStorageKey({ userId, editJobId });
 
 function createPrismaMock(overrides: { videoOwnerId?: string } = {}) {
   return {
@@ -45,7 +47,8 @@ describe("MockRenderer", () => {
       sourceStorageKey,
     });
 
-    expect(result.outputStorageKey).toBe(`outputs/${userId}/${editJobId}.mp4`);
+    expect(result.outputStorageKey).toBe(outputStorageKey);
+    expect(result.localOutputPath).toMatch(/tmp[\\/]jobs[\\/]0f6979d0-4db1-49f7-b99f-6f5b6f706286[\\/]output.mp4$/);
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
     expect(result.metadata).toMatchObject({
       renderer: "mock",
@@ -59,7 +62,8 @@ describe("RenderingService", () => {
     const prisma = createPrismaMock();
     const renderer: Renderer = {
       render: vi.fn().mockResolvedValue({
-        outputStorageKey: `outputs/${userId}/${editJobId}.mp4`,
+        outputStorageKey,
+        localOutputPath: "C:\\tmp\\jobs\\output.mp4",
         durationMs: 1000,
       }),
     };
@@ -93,7 +97,7 @@ describe("RenderingService", () => {
       },
       sourceStorageKey,
     });
-    expect(result.outputStorageKey).toBe(`outputs/${userId}/${editJobId}.mp4`);
+    expect(result.outputStorageKey).toBe(outputStorageKey);
   });
 
   it("fails when edit job and video ownership do not match", async () => {

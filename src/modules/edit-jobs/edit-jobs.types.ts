@@ -22,6 +22,7 @@ export type EditJobResponse = {
   status: EditJobStatus;
   inputConfig: Prisma.JsonValue;
   outputStorageKey: string | null;
+  outputDownloadUrl?: string | null;
   errorMessage: string | null;
   startedAt: Date | null;
   completedAt: Date | null;

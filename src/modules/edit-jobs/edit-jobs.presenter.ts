@@ -1,6 +1,6 @@
 import type { EditJobResponse, EditJobRecord } from "./edit-jobs.types";
 
-export function toEditJobResponse(editJob: EditJobRecord): EditJobResponse {
+export function toEditJobResponse(editJob: EditJobRecord, outputDownloadUrl?: string | null): EditJobResponse {
   return {
     id: editJob.id,
     userId: editJob.userId,
@@ -8,6 +8,7 @@ export function toEditJobResponse(editJob: EditJobRecord): EditJobResponse {
     status: editJob.status,
     inputConfig: editJob.inputConfig,
     outputStorageKey: editJob.outputStorageKey,
+    outputDownloadUrl,
     errorMessage: editJob.errorMessage,
     startedAt: editJob.startedAt,
     completedAt: editJob.completedAt,

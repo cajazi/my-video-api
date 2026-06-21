@@ -1,6 +1,7 @@
 import { EditJobStatus } from "@prisma/client";
 import type { Job } from "bullmq";
 import { describe, expect, it, vi } from "vitest";
+import { createRenderOutputStorageKey } from "../modules/storage/media-storage.paths";
 import type { EditJobQueuePayload } from "../queues/queue.constants";
 import { processEditJob } from "./edit-job.worker";
 
@@ -17,7 +18,15 @@ function createJob(data: unknown): Job<EditJobQueuePayload> {
   } as Job<EditJobQueuePayload>;
 }
 
-function createDependencies(overrides: { renderEditJob?: () => Promise<{ outputStorageKey: string; durationMs: number }> } = {}) {
+const outputStorageKey = createRenderOutputStorageKey(validPayload);
+const localOutputPath = "C:\\tmp\\jobs\\0f6979d0-4db1-49f7-b99f-6f5b6f706286\\output.mp4";
+
+function createDependencies(
+  overrides: {
+    renderEditJob?: () => Promise<{ outputStorageKey: string; localOutputPath: string; durationMs: number }>;
+    uploadRenderedOutput?: () => Promise<{ storageKey: string }>;
+  } = {},
+) {
   return {
     prisma: {
       editJob: {
@@ -28,8 +37,16 @@ function createDependencies(overrides: { renderEditJob?: () => Promise<{ outputS
       renderEditJob:
         overrides.renderEditJob ??
         vi.fn().mockResolvedValue({
-          outputStorageKey: `outputs/${validPayload.userId}/${validPayload.editJobId}.mp4`,
+          outputStorageKey,
+          localOutputPath,
           durationMs: 1000,
+        }),
+    },
+    renderedOutputStorage: {
+      uploadRenderedOutput:
+        overrides.uploadRenderedOutput ??
+        vi.fn().mockResolvedValue({
+          storageKey: outputStorageKey,
         }),
     },
     logger: {
@@ -37,6 +54,7 @@ function createDependencies(overrides: { renderEditJob?: () => Promise<{ outputS
       error: vi.fn(),
     },
     now: vi.fn(() => new Date("2026-06-20T00:00:00.000Z")),
+    cleanupWorkspace: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -58,7 +76,7 @@ describe("processEditJob", () => {
     expect(dependencies.renderingService.renderEditJob).not.toHaveBeenCalled();
   });
 
-  it("transitions an edit job from PROCESSING to COMPLETED and stores outputStorageKey", async () => {
+  it("uploads rendered output, transitions an edit job from PROCESSING to COMPLETED, and stores outputStorageKey", async () => {
     const dependencies = createDependencies();
 
     await processEditJob(createJob(validPayload), dependencies);
@@ -80,12 +98,17 @@ describe("processEditJob", () => {
       },
       data: {
         status: EditJobStatus.COMPLETED,
-        outputStorageKey: `outputs/${validPayload.userId}/${validPayload.editJobId}.mp4`,
+        outputStorageKey,
         completedAt: new Date("2026-06-20T00:00:00.000Z"),
         errorMessage: null,
       },
     });
     expect(dependencies.renderingService.renderEditJob).toHaveBeenCalledWith(validPayload.editJobId);
+    expect(dependencies.renderedOutputStorage.uploadRenderedOutput).toHaveBeenCalledWith({
+      localOutputPath,
+      storageKey: outputStorageKey,
+    });
+    expect(dependencies.cleanupWorkspace).toHaveBeenCalledWith(validPayload.editJobId);
     expect(dependencies.logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         event: "edit_job.job_started",
@@ -128,5 +151,30 @@ describe("processEditJob", () => {
         errorMessage: "simulated failure",
       }),
     );
+    expect(dependencies.cleanupWorkspace).toHaveBeenCalledWith(validPayload.editJobId);
+  });
+
+  it("marks the edit job FAILED when rendered output upload fails", async () => {
+    const uploadError = new Error("storage unavailable");
+    const dependencies = createDependencies({
+      uploadRenderedOutput: vi.fn().mockRejectedValue(uploadError),
+    });
+
+    await expect(processEditJob(createJob(validPayload), dependencies)).rejects.toThrow("storage unavailable");
+
+    expect(dependencies.prisma.editJob.update).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: {
+          id: validPayload.editJobId,
+        },
+        data: {
+          status: EditJobStatus.FAILED,
+          completedAt: new Date("2026-06-20T00:00:00.000Z"),
+          errorMessage: "storage unavailable",
+        },
+      }),
+    );
+    expect(dependencies.cleanupWorkspace).toHaveBeenCalledWith(validPayload.editJobId);
   });
 });

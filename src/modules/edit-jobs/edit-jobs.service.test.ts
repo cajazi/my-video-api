@@ -65,4 +65,57 @@ describe("EditJobsService", () => {
 
     expect(repository.deleteByIdForUser).toHaveBeenCalledWith(editJobId, userId);
   });
+
+  it("adds a signed output download URL for completed jobs", async () => {
+    const outputStorageKey = `render-outputs/${userId}/${editJobId}/output.mp4`;
+    const repository = createRepositoryMock();
+    repository.findByIdForUser.mockResolvedValue({
+      id: editJobId,
+      userId,
+      videoId,
+      status: EditJobStatus.COMPLETED,
+      inputConfig: { trim: { start: 5, end: 60 } },
+      outputStorageKey,
+      errorMessage: null,
+      startedAt: new Date("2026-06-20T00:00:00.000Z"),
+      completedAt: new Date("2026-06-20T00:01:00.000Z"),
+      createdAt: new Date("2026-06-20T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-20T00:01:00.000Z"),
+    });
+    const renderedOutputStorage = {
+      createSignedDownloadUrl: vi.fn().mockResolvedValue("https://storage.example/signed-output"),
+    };
+    const service = new EditJobsService(repository, vi.fn(), renderedOutputStorage);
+
+    const result = await service.getEditJob(userId, editJobId);
+
+    expect(renderedOutputStorage.createSignedDownloadUrl).toHaveBeenCalledWith(outputStorageKey);
+    expect(result.outputDownloadUrl).toBe("https://storage.example/signed-output");
+  });
+
+  it("does not sign output URLs for incomplete jobs", async () => {
+    const repository = createRepositoryMock();
+    repository.findByIdForUser.mockResolvedValue({
+      id: editJobId,
+      userId,
+      videoId,
+      status: EditJobStatus.PROCESSING,
+      inputConfig: { trim: { start: 5, end: 60 } },
+      outputStorageKey: null,
+      errorMessage: null,
+      startedAt: new Date("2026-06-20T00:00:00.000Z"),
+      completedAt: null,
+      createdAt: new Date("2026-06-20T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+    });
+    const renderedOutputStorage = {
+      createSignedDownloadUrl: vi.fn(),
+    };
+    const service = new EditJobsService(repository, vi.fn(), renderedOutputStorage);
+
+    const result = await service.getEditJob(userId, editJobId);
+
+    expect(renderedOutputStorage.createSignedDownloadUrl).not.toHaveBeenCalled();
+    expect(result.outputDownloadUrl).toBeNull();
+  });
 });

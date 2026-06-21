@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { z } from "zod";
 import type { Renderer } from "./renderer.interface";
 import type { RenderInput } from "./rendering.types";
+import { createRenderOutputStorageKey } from "../storage/media-storage.paths";
 import { checkFfmpegAvailability, runFfmpeg } from "./ffmpeg.utils";
 import { getEditJobWorkspacePath } from "./workspace.util";
 
@@ -76,7 +77,8 @@ export class FFmpegRenderer implements Renderer {
     await this.executeFfmpeg(ffmpegArgs);
 
     return {
-      outputStorageKey: `outputs/${input.userId}/${input.editJobId}.mp4`,
+      outputStorageKey: createRenderOutputStorageKey(input),
+      localOutputPath,
       durationMs: this.now() - startedAt,
       metadata: {
         renderer: "ffmpeg",

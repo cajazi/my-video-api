@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { EditJobStatus } from "@prisma/client";
 import type { EditJobQueuePayload } from "../../queues/queue.constants";
 import { HttpError } from "../../utils/http-error";
 import type { CreateEditJobInput } from "./edit-jobs.schemas";
@@ -9,11 +10,15 @@ const NOT_FOUND_MESSAGE = "Resource not found";
 const QUEUE_UNAVAILABLE_MESSAGE = "Edit job queue is unavailable";
 
 type EnqueueEditJob = (payload: EditJobQueuePayload) => Promise<unknown>;
+type RenderedOutputStorage = {
+  createSignedDownloadUrl(storageKey: string): Promise<string>;
+};
 
 export class EditJobsService {
   constructor(
     private readonly repository: EditJobsRepository,
     private readonly enqueueEditJob: EnqueueEditJob,
+    private readonly renderedOutputStorage?: RenderedOutputStorage,
   ) {}
 
   async createEditJob(userId: string, input: CreateEditJobInput) {
@@ -40,7 +45,7 @@ export class EditJobsService {
       throw new HttpError(QUEUE_UNAVAILABLE_MESSAGE, 503);
     }
 
-    return toEditJobResponse(editJob);
+    return toEditJobResponse(editJob, null);
   }
 
   async getEditJob(userId: string, id: string) {
@@ -50,6 +55,23 @@ export class EditJobsService {
       throw new HttpError(NOT_FOUND_MESSAGE, 404);
     }
 
-    return toEditJobResponse(editJob);
+    const outputDownloadUrl =
+      editJob.status === EditJobStatus.COMPLETED && editJob.outputStorageKey
+        ? await this.createOutputDownloadUrl(editJob.outputStorageKey)
+        : null;
+
+    return toEditJobResponse(editJob, outputDownloadUrl);
+  }
+
+  private async createOutputDownloadUrl(outputStorageKey: string) {
+    if (!this.renderedOutputStorage) {
+      return null;
+    }
+
+    try {
+      return await this.renderedOutputStorage.createSignedDownloadUrl(outputStorageKey);
+    } catch {
+      throw new HttpError("Storage operation failed", 502);
+    }
   }
 }
