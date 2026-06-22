@@ -243,7 +243,9 @@ export const editSpecV1Schema = z
         transition.type === "dip_to_black" ||
         transition.type === "dip_to_white" ||
         transition.type === "slide_left" ||
-        transition.type === "slide_right"
+        transition.type === "slide_right" ||
+        transition.type === "zoom_in" ||
+        transition.type === "zoom_out"
       ) {
         const fromWindows = transitionWindowsByClipId.get(transition.fromClipId) ?? { incomingMs: 0, outgoingMs: 0 };
         fromWindows.outgoingMs += transition.durationMs;

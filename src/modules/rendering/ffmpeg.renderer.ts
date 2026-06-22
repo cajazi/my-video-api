@@ -27,7 +27,8 @@ type RenderedClipEntry = RenderedMediaEntry & {
 
 type DipTransitionType = "dip_to_black" | "dip_to_white";
 type SlideTransitionType = "slide_left" | "slide_right";
-type RenderedTransitionType = "dissolve" | DipTransitionType | SlideTransitionType;
+type ZoomTransitionType = "zoom_in" | "zoom_out";
+type RenderedTransitionType = "dissolve" | DipTransitionType | SlideTransitionType | ZoomTransitionType;
 
 type FFmpegRendererDependencies = {
   localTestVideoPath: string;
@@ -195,9 +196,10 @@ export class FFmpegRenderer implements Renderer {
 
         while (renderPlan.segments[cursor + 1]?.type === "transition") {
           const transition = renderPlan.segments[cursor + 1] as TransitionRenderOperation;
+          const transitionType = transition.transitionType;
 
           if (!this.isRenderedTransition(transition)) {
-            throw new Error(`Unsupported transition renderer: ${transition.transitionType}`);
+            throw new Error(`Unsupported transition renderer: ${transitionType}`);
           }
 
           const toEntry = mediaByClipId.get(transition.toClipId);
@@ -244,7 +246,12 @@ export class FFmpegRenderer implements Renderer {
   private isRenderedTransition(transition: TransitionRenderOperation): transition is TransitionRenderOperation & {
     transitionType: RenderedTransitionType;
   } {
-    return transition.transitionType === "dissolve" || this.isDipTransition(transition) || this.isSlideTransition(transition);
+    return (
+      transition.transitionType === "dissolve" ||
+      this.isDipTransition(transition) ||
+      this.isSlideTransition(transition) ||
+      this.isZoomTransition(transition)
+    );
   }
 
   private isDipTransition(transition: TransitionRenderOperation): transition is TransitionRenderOperation & {
@@ -257,6 +264,12 @@ export class FFmpegRenderer implements Renderer {
     transitionType: SlideTransitionType;
   } {
     return transition.transitionType === "slide_left" || transition.transitionType === "slide_right";
+  }
+
+  private isZoomTransition(transition: TransitionRenderOperation): transition is TransitionRenderOperation & {
+    transitionType: ZoomTransitionType;
+  } {
+    return transition.transitionType === "zoom_in" || transition.transitionType === "zoom_out";
   }
 
   private getDipColor(transitionType: DipTransitionType) {
@@ -344,6 +357,24 @@ export class FFmpegRenderer implements Renderer {
           `[v${index}]trim=start=${(fromClip.durationMs - transition.durationMs) / 1000}:end=${fromClip.durationMs / 1000},setpts=PTS-STARTPTS[out${index}]`,
           `[v${index + 1}]trim=start=0:end=${durationSeconds},setpts=PTS-STARTPTS[in${index}]`,
           `[out${index}][in${index}]overlay=x='${slideXExpression}':y=0:shortest=1[${transitionLabel}]`,
+        );
+      } else if (this.isZoomTransition(transition)) {
+        const durationSeconds = transition.durationMs / 1000;
+        const outgoingScaleExpression =
+          transition.transitionType === "zoom_in"
+            ? `1-0.2*t/${durationSeconds}`
+            : `1+0.2*t/${durationSeconds}`;
+        const incomingScaleExpression =
+          transition.transitionType === "zoom_in"
+            ? `1.2-0.2*t/${durationSeconds}`
+            : `0.8+0.2*t/${durationSeconds}`;
+
+        filters.push(
+          `[v${index}]trim=start=${(fromClip.durationMs - transition.durationMs) / 1000}:end=${fromClip.durationMs / 1000},setpts=PTS-STARTPTS[out${index}]`,
+          `[v${index + 1}]trim=start=0:end=${durationSeconds},setpts=PTS-STARTPTS[in${index}]`,
+          `[out${index}]scale=w='trunc(iw*(${outgoingScaleExpression})/2)*2':h='trunc(ih*(${outgoingScaleExpression})/2)*2':eval=frame,setsar=1,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,crop=${width}:${height}[outzoom${index}]`,
+          `[in${index}]scale=w='trunc(iw*(${incomingScaleExpression})/2)*2':h='trunc(ih*(${incomingScaleExpression})/2)*2':eval=frame,setsar=1,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,crop=${width}:${height}[inzoom${index}]`,
+          `[outzoom${index}][inzoom${index}]blend=all_expr='A*(1-T/${durationSeconds})+B*(T/${durationSeconds})'[${transitionLabel}]`,
         );
       }
 
