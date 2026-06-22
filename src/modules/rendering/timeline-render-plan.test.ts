@@ -141,6 +141,79 @@ describe("createTimelineRenderPlan", () => {
     ]);
   });
 
+  it("carries audio tracks without changing video render segments", () => {
+    const editSpec = editSpecV1Schema.parse({
+      version: "1",
+      timeline: {
+        exportSettings,
+        audioTracks: [
+          {
+            id: "audio-track-1",
+            type: "audio",
+            clips: [
+              {
+                id: "audio-clip-1",
+                assetId: "audio-asset-1",
+                positionMs: 500,
+                trimStartMs: 1000,
+                trimEndMs: 4000,
+                durationMs: 3000,
+                volume: 0.75,
+                fadeInMs: 250,
+                fadeOutMs: 500,
+              },
+            ],
+          },
+        ],
+        tracks: [
+          {
+            id: "track-1",
+            type: "video",
+            clips: [
+              {
+                id: "clip-1",
+                assetId: "asset-1",
+                videoId,
+                positionMs: 0,
+                trimStartMs: 0,
+                trimEndMs: 1000,
+                durationMs: 1000,
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const renderPlan = createTimelineRenderPlan(editSpec);
+
+    expect(renderPlan.segments).toEqual([
+      expect.objectContaining({
+        type: "clip",
+        clipId: "clip-1",
+        durationMs: 1000,
+      }),
+    ]);
+    expect(renderPlan.audioTracks).toEqual([
+      {
+        id: "audio-track-1",
+        type: "audio",
+        clips: [
+          {
+            id: "audio-clip-1",
+            assetId: "audio-asset-1",
+            positionMs: 500,
+            trimStartMs: 1000,
+            trimEndMs: 4000,
+            durationMs: 3000,
+            volume: 0.75,
+            fadeInMs: 250,
+            fadeOutMs: 500,
+          },
+        ],
+      },
+    ]);
+  });
+
   it("includes transition operations for validated adjacent clip boundaries", () => {
     const editSpec = editSpecV1Schema.parse({
       version: "1",

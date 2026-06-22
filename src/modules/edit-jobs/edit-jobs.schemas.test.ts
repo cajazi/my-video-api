@@ -24,16 +24,31 @@ function createClip(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createAudioClip(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "audio-clip-1",
+    assetId: "audio-asset-1",
+    positionMs: 0,
+    trimStartMs: 0,
+    trimEndMs: 5000,
+    durationMs: 5000,
+    volume: 0.8,
+    ...overrides,
+  };
+}
+
 function createValidEditSpec(
   clips: Record<string, unknown>[] = [createClip()],
   settings: Record<string, unknown> = exportSettings,
   transitions: Record<string, unknown>[] = [],
+  audioTracks: Record<string, unknown>[] = [],
 ) {
   return {
     version: "1",
     timeline: {
       exportSettings: settings,
       transitions,
+      audioTracks,
       tracks: [
         {
           id: "track-1",
@@ -207,6 +222,137 @@ describe("createEditJobSchema", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+
+  it("accepts a valid audio track", () => {
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(undefined, exportSettings, [], [
+        {
+          id: "audio-track-1",
+          type: "audio",
+          clips: [
+            createAudioClip({
+              fadeInMs: 250,
+              fadeOutMs: 500,
+            }),
+          ],
+        },
+      ]),
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts gaps between audio clips on the same audio track", () => {
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(undefined, exportSettings, [], [
+        {
+          id: "audio-track-1",
+          type: "audio",
+          clips: [
+            createAudioClip({ id: "audio-clip-1", positionMs: 0, trimStartMs: 0, trimEndMs: 1000, durationMs: 1000 }),
+            createAudioClip({
+              id: "audio-clip-2",
+              assetId: "audio-asset-2",
+              positionMs: 1500,
+              trimStartMs: 5000,
+              trimEndMs: 6500,
+              durationMs: 1500,
+            }),
+          ],
+        },
+      ]),
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects overlapping audio clips on the same audio track", () => {
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(undefined, exportSettings, [], [
+        {
+          id: "audio-track-1",
+          type: "audio",
+          clips: [
+            createAudioClip({ id: "audio-clip-1", positionMs: 0, trimStartMs: 0, trimEndMs: 1000, durationMs: 1000 }),
+            createAudioClip({
+              id: "audio-clip-2",
+              assetId: "audio-asset-2",
+              positionMs: 750,
+              trimStartMs: 5000,
+              trimEndMs: 6500,
+              durationMs: 1500,
+            }),
+          ],
+        },
+      ]),
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects invalid audio volume values", () => {
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(undefined, exportSettings, [], [
+        {
+          id: "audio-track-1",
+          type: "audio",
+          clips: [
+            createAudioClip({
+              volume: 1.1,
+            }),
+          ],
+        },
+      ]),
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects invalid audio fade durations", () => {
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(undefined, exportSettings, [], [
+        {
+          id: "audio-track-1",
+          type: "audio",
+          clips: [
+            createAudioClip({
+              fadeInMs: -1,
+            }),
+          ],
+        },
+      ]),
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects audio fades whose total exceeds clip duration", () => {
+    const result = createEditJobSchema.safeParse({
+      videoId,
+      editSpec: createValidEditSpec(undefined, exportSettings, [], [
+        {
+          id: "audio-track-1",
+          type: "audio",
+          clips: [
+            createAudioClip({
+              trimStartMs: 0,
+              trimEndMs: 1000,
+              durationMs: 1000,
+              fadeInMs: 600,
+              fadeOutMs: 500,
+            }),
+          ],
+        },
+      ]),
+    });
+
+    expect(result.success).toBe(false);
   });
 
   it("rejects invalid video ids", () => {

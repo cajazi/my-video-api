@@ -55,6 +55,24 @@ export const transitionRenderOperationSchema = z.object({
   outputTimelineDurationMs: z.number().int().positive(),
 });
 
+export const audioClipRenderPlanSchema = z.object({
+  id: z.string().min(1),
+  assetId: z.string().min(1),
+  positionMs: z.number().int().min(0),
+  trimStartMs: z.number().int().min(0),
+  trimEndMs: z.number().int().positive(),
+  durationMs: z.number().int().positive(),
+  volume: z.number().min(0).max(1),
+  fadeInMs: z.number().int().min(0).optional(),
+  fadeOutMs: z.number().int().min(0).optional(),
+});
+
+export const audioTrackRenderPlanSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal("audio"),
+  clips: z.array(audioClipRenderPlanSchema),
+});
+
 export const renderSegmentSchema = z.discriminatedUnion("type", [
   clipRenderSegmentSchema,
   fillerRenderSegmentSchema,
@@ -65,6 +83,7 @@ export const timelineRenderPlanSchema = z.object({
   type: z.literal("timeline-render-plan-v1"),
   exportSettings: exportSettingsSchema,
   segments: z.array(renderSegmentSchema).min(1),
+  audioTracks: z.array(audioTrackRenderPlanSchema).optional(),
 });
 
 export type TimelineRenderPlan = z.infer<typeof timelineRenderPlanSchema>;
@@ -130,5 +149,6 @@ export function createTimelineRenderPlan(editSpec: EditSpecV1): TimelineRenderPl
     type: "timeline-render-plan-v1",
     exportSettings,
     segments,
+    ...(editSpec.timeline.audioTracks.length > 0 ? { audioTracks: editSpec.timeline.audioTracks } : {}),
   };
 }
