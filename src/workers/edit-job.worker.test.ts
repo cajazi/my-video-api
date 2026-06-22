@@ -100,6 +100,38 @@ function createDependencies(
   };
 }
 
+function createFfmpegRenderingService(inputConfig: unknown, executeFfmpeg: (args: string[]) => Promise<void>) {
+  const renderer = new FFmpegRenderer({
+    localTestVideoPath: "C:\\tmp\\source.mp4",
+    checkAvailability: vi.fn().mockResolvedValue(true),
+    createWorkspace: vi.fn().mockResolvedValue(undefined),
+    writeConcatList: vi.fn().mockResolvedValue(undefined),
+    executeFfmpeg,
+    now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1250),
+  });
+
+  return new RenderingService(
+    {
+      editJob: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: validPayload.editJobId,
+          userId: validPayload.userId,
+          videoId: validPayload.videoId,
+          inputConfig,
+        }),
+      },
+      video: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: validPayload.videoId,
+          ownerId: validPayload.userId,
+          storageKey: "source-media/user/source.mp4",
+        }),
+      },
+    },
+    renderer,
+  );
+}
+
 describe("processEditJob", () => {
   it("rejects invalid payloads before processing", async () => {
     const dependencies = createDependencies();
@@ -451,6 +483,130 @@ describe("processEditJob", () => {
       expect.arrayContaining([
         "-filter_complex",
         "[0:v]scale=1080:1920,fps=60,format=yuv420p[v0];[1:v]scale=1080:1920,fps=60,format=yuv420p[v1];[2:v]scale=1080:1920,fps=60,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=1:offset=2[x1];[x1][v2]xfade=transition=fade:duration=0.5:offset=5.5[v]",
+      ]),
+    );
+    expect(dependencies.renderedOutputStorage.uploadRenderedOutput).toHaveBeenCalled();
+  });
+
+  it("processes a V1 edit spec with a dip_to_black transition through the FFmpeg render path", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const renderingService = createFfmpegRenderingService(
+      {
+        ...editSpec,
+        timeline: {
+          ...editSpec.timeline,
+          tracks: [
+            {
+              id: "track-1",
+              type: "video",
+              clips: [
+                {
+                  id: "clip-1",
+                  assetId: "asset-1",
+                  videoId: validPayload.videoId,
+                  positionMs: 0,
+                  trimStartMs: 0,
+                  trimEndMs: 2000,
+                  durationMs: 2000,
+                },
+                {
+                  id: "clip-2",
+                  assetId: "asset-2",
+                  videoId: validPayload.videoId,
+                  positionMs: 2000,
+                  trimStartMs: 5000,
+                  trimEndMs: 7000,
+                  durationMs: 2000,
+                },
+              ],
+            },
+          ],
+          transitions: [
+            {
+              id: "transition-1",
+              type: "dip_to_black",
+              fromClipId: "clip-1",
+              toClipId: "clip-2",
+              durationMs: 500,
+            },
+          ],
+        },
+      },
+      executeFfmpeg,
+    );
+    const dependencies = createDependencies({
+      renderEditJob: renderingService.renderEditJob.bind(renderingService),
+    });
+
+    await processEditJob(createJob(validPayload), dependencies);
+
+    expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["color=c=0x000000:s=1080x1920:r=60:d=0.25"]));
+    expect(executeFfmpeg).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "-filter_complex",
+        expect.stringContaining("[outtail][colorout]xfade=transition=fade:duration=0.25:offset=0[outfade]"),
+      ]),
+    );
+    expect(dependencies.renderedOutputStorage.uploadRenderedOutput).toHaveBeenCalled();
+  });
+
+  it("processes a V1 edit spec with a dip_to_white transition through the FFmpeg render path", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const renderingService = createFfmpegRenderingService(
+      {
+        ...editSpec,
+        timeline: {
+          ...editSpec.timeline,
+          tracks: [
+            {
+              id: "track-1",
+              type: "video",
+              clips: [
+                {
+                  id: "clip-1",
+                  assetId: "asset-1",
+                  videoId: validPayload.videoId,
+                  positionMs: 0,
+                  trimStartMs: 0,
+                  trimEndMs: 3000,
+                  durationMs: 3000,
+                },
+                {
+                  id: "clip-2",
+                  assetId: "asset-2",
+                  videoId: validPayload.videoId,
+                  positionMs: 3000,
+                  trimStartMs: 5000,
+                  trimEndMs: 8000,
+                  durationMs: 3000,
+                },
+              ],
+            },
+          ],
+          transitions: [
+            {
+              id: "transition-1",
+              type: "dip_to_white",
+              fromClipId: "clip-1",
+              toClipId: "clip-2",
+              durationMs: 1000,
+            },
+          ],
+        },
+      },
+      executeFfmpeg,
+    );
+    const dependencies = createDependencies({
+      renderEditJob: renderingService.renderEditJob.bind(renderingService),
+    });
+
+    await processEditJob(createJob(validPayload), dependencies);
+
+    expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["color=c=0xFFFFFF:s=1080x1920:r=60:d=0.5"]));
+    expect(executeFfmpeg).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "-filter_complex",
+        expect.stringContaining("[colorin][intail]xfade=transition=fade:duration=0.5:offset=0[infade]"),
       ]),
     );
     expect(dependencies.renderedOutputStorage.uploadRenderedOutput).toHaveBeenCalled();

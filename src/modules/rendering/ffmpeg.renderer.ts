@@ -25,6 +25,8 @@ type RenderedClipEntry = RenderedMediaEntry & {
   segment: ClipRenderSegment;
 };
 
+type DipTransitionType = "dip_to_black" | "dip_to_white";
+
 type FFmpegRendererDependencies = {
   localTestVideoPath: string;
   checkAvailability?: () => Promise<boolean>;
@@ -168,7 +170,7 @@ export class FFmpegRenderer implements Renderer {
     );
     const mediaBySegment = new Map(renderedMediaEntries.map((entry) => [entry.segment, entry.outputPath]));
     const physicalOutputPaths: string[] = [];
-    let dissolveIndex = 0;
+    let transitionIndex = 0;
 
     for (let index = 0; index < renderPlan.segments.length; index += 1) {
       const segment = renderPlan.segments[index];
@@ -178,6 +180,28 @@ export class FFmpegRenderer implements Renderer {
       }
 
       if (segment.type === "clip" && renderPlan.segments[index + 1]?.type === "transition") {
+        const firstTransition = renderPlan.segments[index + 1] as TransitionRenderOperation;
+
+        if (this.isDipTransition(firstTransition)) {
+          if (renderPlan.segments[index + 3]?.type === "transition") {
+            throw new Error(`Unsupported transition renderer: ${firstTransition.transitionType}`);
+          }
+
+          const fromEntry = mediaByClipId.get(firstTransition.fromClipId);
+          const toEntry = mediaByClipId.get(firstTransition.toClipId);
+
+          if (!fromEntry || !toEntry) {
+            throw new Error("Dip transition requires rendered adjacent clip media");
+          }
+
+          const outputPath = path.join(workspacePath, `dip-${String(transitionIndex).padStart(3, "0")}.mp4`);
+          await this.renderDipBoundary(fromEntry, toEntry, firstTransition, outputPath);
+          physicalOutputPaths.push(outputPath);
+          transitionIndex += 1;
+          index += 2;
+          continue;
+        }
+
         const chainClipEntries: RenderedClipEntry[] = [];
         const chainTransitions: TransitionRenderOperation[] = [];
         let cursor = index;
@@ -207,10 +231,10 @@ export class FFmpegRenderer implements Renderer {
           cursor += 2;
         }
 
-        const outputPath = path.join(workspacePath, `dissolve-${String(dissolveIndex).padStart(3, "0")}.mp4`);
+        const outputPath = path.join(workspacePath, `dissolve-${String(transitionIndex).padStart(3, "0")}.mp4`);
         await this.renderDissolveChain(chainClipEntries, chainTransitions, outputPath);
         physicalOutputPaths.push(outputPath);
-        dissolveIndex += 1;
+        transitionIndex += 1;
         index = cursor;
         continue;
       }
@@ -223,6 +247,65 @@ export class FFmpegRenderer implements Renderer {
     }
 
     return physicalOutputPaths;
+  }
+
+  private isDipTransition(transition: TransitionRenderOperation): transition is TransitionRenderOperation & {
+    transitionType: DipTransitionType;
+  } {
+    return transition.transitionType === "dip_to_black" || transition.transitionType === "dip_to_white";
+  }
+
+  private getDipColor(transitionType: DipTransitionType) {
+    return transitionType === "dip_to_black" ? "0x000000" : "0xFFFFFF";
+  }
+
+  private async renderDipBoundary(
+    fromEntry: RenderedClipEntry,
+    toEntry: RenderedClipEntry,
+    transition: TransitionRenderOperation & { transitionType: DipTransitionType },
+    outputPath: string,
+  ) {
+    const { width, height, fps } = transition.exportSettings;
+    const halfDurationMs = transition.durationMs / 2;
+    const halfDurationSeconds = halfDurationMs / 1000;
+    const fromDurationSeconds = fromEntry.segment.durationMs / 1000;
+    const toDurationSeconds = toEntry.segment.durationMs / 1000;
+    const outgoingBodyEndSeconds = (fromEntry.segment.durationMs - halfDurationMs) / 1000;
+    const color = this.getDipColor(transition.transitionType);
+    const filter = [
+      `[0:v]scale=${width}:${height},fps=${fps},format=yuv420p,setpts=PTS-STARTPTS[v0]`,
+      `[1:v]scale=${width}:${height},fps=${fps},format=yuv420p,setpts=PTS-STARTPTS[v1]`,
+      "[2:v]format=yuv420p,setpts=PTS-STARTPTS,split=2[colorout][colorin]",
+      `[v0]trim=start=0:end=${outgoingBodyEndSeconds},setpts=PTS-STARTPTS[outbody]`,
+      `[v0]trim=start=${outgoingBodyEndSeconds}:end=${fromDurationSeconds},setpts=PTS-STARTPTS[outtail]`,
+      `[outtail][colorout]xfade=transition=fade:duration=${halfDurationSeconds}:offset=0[outfade]`,
+      `[v1]trim=start=0:end=${halfDurationSeconds},setpts=PTS-STARTPTS[intail]`,
+      `[colorin][intail]xfade=transition=fade:duration=${halfDurationSeconds}:offset=0[infade]`,
+      `[v1]trim=start=${halfDurationSeconds}:end=${toDurationSeconds},setpts=PTS-STARTPTS[inbody]`,
+      "[outbody][outfade][infade][inbody]concat=n=4:v=1:a=0[v]",
+    ].join(";");
+
+    await this.executeFfmpeg([
+      "-y",
+      "-i",
+      fromEntry.outputPath,
+      "-i",
+      toEntry.outputPath,
+      "-f",
+      "lavfi",
+      "-i",
+      `color=c=${color}:s=${width}x${height}:r=${fps}:d=${halfDurationSeconds}`,
+      "-filter_complex",
+      filter,
+      "-map",
+      "[v]",
+      "-an",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      outputPath,
+    ]);
   }
 
   private async renderDissolveChain(
