@@ -25,6 +25,7 @@ type RenderedClipEntry = RenderedMediaEntry & {
   segment: ClipRenderSegment;
 };
 
+type AudioRenderClip = NonNullable<TimelineRenderPlan["audioTracks"]>[number]["clips"][number];
 type DipTransitionType = "dip_to_black" | "dip_to_white";
 type SlideTransitionType = "slide_left" | "slide_right";
 type ZoomTransitionType = "zoom_in" | "zoom_out";
@@ -75,6 +76,8 @@ export class FFmpegRenderer implements Renderer {
     const startedAt = this.now();
     const workspacePath = getEditJobWorkspacePath(input.editJobId);
     const localOutputPath = path.join(workspacePath, "output.mp4");
+    const hasAudioTracks = this.hasAudioTracks(renderPlan);
+    const videoOutputPath = hasAudioTracks ? path.join(workspacePath, "video-output.mp4") : localOutputPath;
     const mediaSegments = renderPlan.segments.filter((segment): segment is MediaRenderSegment => segment.type !== "transition");
     const segmentOutputPaths = mediaSegments.map((_, index) =>
       path.join(workspacePath, `segment-${String(index).padStart(3, "0")}.mp4`),
@@ -96,7 +99,13 @@ export class FFmpegRenderer implements Renderer {
     const physicalOutputPaths = await this.createPhysicalOutputPaths(renderPlan, renderedMediaEntries, workspacePath);
 
     await this.writeConcatList(concatListPath, this.createConcatList(physicalOutputPaths));
-    await this.concatSegments(concatListPath, localOutputPath, renderPlan.exportSettings);
+    await this.concatSegments(concatListPath, videoOutputPath, renderPlan.exportSettings);
+
+    if (hasAudioTracks) {
+      const mixedAudioPath = path.join(workspacePath, "mixed-audio.m4a");
+      await this.renderMixedAudio(localTestVideoPath, renderPlan, mixedAudioPath);
+      await this.muxAudio(videoOutputPath, mixedAudioPath, localOutputPath);
+    }
 
     return {
       outputStorageKey: createRenderOutputStorageKey(input),
@@ -112,6 +121,25 @@ export class FFmpegRenderer implements Renderer {
 
   private parseRenderPlan(inputConfig: RenderInput["inputConfig"]): TimelineRenderPlan {
     return timelineRenderPlanSchema.parse(inputConfig);
+  }
+
+  private hasAudioTracks(renderPlan: TimelineRenderPlan) {
+    return (renderPlan.audioTracks ?? []).some((track) => track.clips.length > 0);
+  }
+
+  private getVideoOutputDurationMs(renderPlan: TimelineRenderPlan) {
+    const mediaDurationMs = renderPlan.segments
+      .filter((segment) => segment.type === "clip" || segment.type === "filler")
+      .reduce((total, segment) => total + segment.durationMs, 0);
+    const transitionDurationMs = renderPlan.segments
+      .filter((segment) => segment.type === "transition")
+      .reduce((total, segment) => total + segment.outputTimelineDurationMs, 0);
+
+    return mediaDurationMs - transitionDurationMs;
+  }
+
+  private getAudioClips(renderPlan: TimelineRenderPlan): AudioRenderClip[] {
+    return (renderPlan.audioTracks ?? []).flatMap((track) => track.clips);
   }
 
   private async renderSegment(sourcePath: string, segment: MediaRenderSegment, outputPath: string) {
@@ -470,6 +498,61 @@ export class FFmpegRenderer implements Renderer {
       "-pix_fmt",
       "yuv420p",
       "-an",
+      outputPath,
+    ]);
+  }
+
+  private async renderMixedAudio(sourcePath: string, renderPlan: TimelineRenderPlan, outputPath: string) {
+    const audioClips = this.getAudioClips(renderPlan);
+    const videoDurationSeconds = this.getVideoOutputDurationMs(renderPlan) / 1000;
+    const inputArgs = audioClips.flatMap(() => ["-i", sourcePath]);
+    const clipFilters = audioClips.map((clip, index) => {
+      const fadeInFilter = clip.fadeInMs ? `,afade=t=in:st=0:d=${clip.fadeInMs / 1000}` : "";
+      const fadeOutFilter = clip.fadeOutMs
+        ? `,afade=t=out:st=${(clip.durationMs - clip.fadeOutMs) / 1000}:d=${clip.fadeOutMs / 1000}`
+        : "";
+
+      return (
+        `[${index}:a]atrim=start=${clip.trimStartMs / 1000}:end=${clip.trimEndMs / 1000},` +
+        `asetpts=PTS-STARTPTS,volume=${clip.volume}${fadeInFilter}${fadeOutFilter},` +
+        `adelay=${clip.positionMs}|${clip.positionMs}[a${index}]`
+      );
+    });
+    const mixedInputLabels = audioClips.map((_, index) => `[a${index}]`).join("");
+    const mixFilter =
+      audioClips.length === 1
+        ? `[a0]apad,atrim=0:${videoDurationSeconds},asetpts=PTS-STARTPTS[a]`
+        : `${mixedInputLabels}amix=inputs=${audioClips.length}:duration=longest:normalize=0,apad,atrim=0:${videoDurationSeconds},asetpts=PTS-STARTPTS[a]`;
+
+    await this.executeFfmpeg([
+      "-y",
+      ...inputArgs,
+      "-filter_complex",
+      `${clipFilters.join(";")};${mixFilter}`,
+      "-map",
+      "[a]",
+      "-vn",
+      "-c:a",
+      "aac",
+      outputPath,
+    ]);
+  }
+
+  private async muxAudio(videoPath: string, audioPath: string, outputPath: string) {
+    await this.executeFfmpeg([
+      "-y",
+      "-i",
+      videoPath,
+      "-i",
+      audioPath,
+      "-map",
+      "0:v:0",
+      "-map",
+      "1:a:0",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
       outputPath,
     ]);
   }

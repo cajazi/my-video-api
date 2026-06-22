@@ -16,7 +16,7 @@ const exportSettings = {
   backgroundFillColor: "#123abc",
 } as const;
 
-function createInput(overrides: { startMs?: number; endMs?: number; segments?: unknown[] } = {}) {
+function createInput(overrides: { startMs?: number; endMs?: number; segments?: unknown[]; audioTracks?: unknown[] } = {}) {
   return {
     editJobId,
     userId,
@@ -40,6 +40,7 @@ function createInput(overrides: { startMs?: number; endMs?: number; segments?: u
             durationMs: (overrides.endMs ?? 3000) - (overrides.startMs ?? 1000),
           },
         ],
+      ...(overrides.audioTracks ? { audioTracks: overrides.audioTracks } : {}),
     },
   };
 }
@@ -263,6 +264,275 @@ describe("FFmpegRenderer", () => {
       "yuv420p",
       fillerPath,
     ]);
+  });
+
+  it("mixes a single audio clip into the rendered output", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const writeConcatList = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList,
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
+    });
+    const workspacePath = path.resolve(process.cwd(), "tmp", "jobs", editJobId);
+    const videoOutputPath = path.join(workspacePath, "video-output.mp4");
+    const mixedAudioPath = path.join(workspacePath, "mixed-audio.m4a");
+    const localOutputPath = path.join(workspacePath, "output.mp4");
+
+    await renderer.render(
+      createInput({
+        startMs: 0,
+        endMs: 3000,
+        audioTracks: [
+          {
+            id: "audio-track-1",
+            type: "audio",
+            clips: [
+              {
+                id: "audio-clip-1",
+                assetId: "audio-asset-1",
+                positionMs: 0,
+                trimStartMs: 1000,
+                trimEndMs: 3000,
+                durationMs: 2000,
+                volume: 0.8,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(2, expect.arrayContaining(["-f", "concat", videoOutputPath]));
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(3, [
+      "-y",
+      "-i",
+      localTestVideoPath,
+      "-filter_complex",
+      "[0:a]atrim=start=1:end=3,asetpts=PTS-STARTPTS,volume=0.8,adelay=0|0[a0];[a0]apad,atrim=0:3,asetpts=PTS-STARTPTS[a]",
+      "-map",
+      "[a]",
+      "-vn",
+      "-c:a",
+      "aac",
+      mixedAudioPath,
+    ]);
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(4, [
+      "-y",
+      "-i",
+      videoOutputPath,
+      "-i",
+      mixedAudioPath,
+      "-map",
+      "0:v:0",
+      "-map",
+      "1:a:0",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      localOutputPath,
+    ]);
+  });
+
+  it("delays audio clips placed after timeline start", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList: vi.fn().mockResolvedValue(undefined),
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
+    });
+
+    await renderer.render(
+      createInput({
+        startMs: 0,
+        endMs: 3000,
+        audioTracks: [
+          {
+            id: "audio-track-1",
+            type: "audio",
+            clips: [
+              {
+                id: "audio-clip-1",
+                assetId: "audio-asset-1",
+                positionMs: 750,
+                trimStartMs: 0,
+                trimEndMs: 1000,
+                durationMs: 1000,
+                volume: 1,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      3,
+      expect.arrayContaining([
+        "-filter_complex",
+        "[0:a]atrim=start=0:end=1,asetpts=PTS-STARTPTS,volume=1,adelay=750|750[a0];[a0]apad,atrim=0:3,asetpts=PTS-STARTPTS[a]",
+      ]),
+    );
+  });
+
+  it("applies audio fade in and fade out filters", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList: vi.fn().mockResolvedValue(undefined),
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
+    });
+
+    await renderer.render(
+      createInput({
+        startMs: 0,
+        endMs: 4000,
+        audioTracks: [
+          {
+            id: "audio-track-1",
+            type: "audio",
+            clips: [
+              {
+                id: "audio-clip-1",
+                assetId: "audio-asset-1",
+                positionMs: 0,
+                trimStartMs: 0,
+                trimEndMs: 3000,
+                durationMs: 3000,
+                volume: 0.5,
+                fadeInMs: 500,
+                fadeOutMs: 1000,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      3,
+      expect.arrayContaining([
+        "-filter_complex",
+        expect.stringContaining("volume=0.5,afade=t=in:st=0:d=0.5,afade=t=out:st=2:d=1,adelay=0|0[a0]"),
+      ]),
+    );
+  });
+
+  it("mixes overlapping audio clips across audio tracks", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList: vi.fn().mockResolvedValue(undefined),
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
+    });
+
+    await renderer.render(
+      createInput({
+        startMs: 0,
+        endMs: 3000,
+        audioTracks: [
+          {
+            id: "audio-track-1",
+            type: "audio",
+            clips: [
+              {
+                id: "audio-clip-1",
+                assetId: "audio-asset-1",
+                positionMs: 0,
+                trimStartMs: 0,
+                trimEndMs: 2000,
+                durationMs: 2000,
+                volume: 0.7,
+              },
+            ],
+          },
+          {
+            id: "audio-track-2",
+            type: "audio",
+            clips: [
+              {
+                id: "audio-clip-2",
+                assetId: "audio-asset-2",
+                positionMs: 500,
+                trimStartMs: 3000,
+                trimEndMs: 5000,
+                durationMs: 2000,
+                volume: 0.6,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      3,
+      expect.arrayContaining([
+        "-i",
+        localTestVideoPath,
+        "-i",
+        localTestVideoPath,
+        "-filter_complex",
+        expect.stringContaining("[a0][a1]amix=inputs=2:duration=longest:normalize=0,apad,atrim=0:3"),
+      ]),
+    );
+  });
+
+  it("trims mixed audio to video-driven output duration", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList: vi.fn().mockResolvedValue(undefined),
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
+    });
+
+    await renderer.render(
+      createInput({
+        startMs: 0,
+        endMs: 2000,
+        audioTracks: [
+          {
+            id: "audio-track-1",
+            type: "audio",
+            clips: [
+              {
+                id: "audio-clip-1",
+                assetId: "audio-asset-1",
+                positionMs: 0,
+                trimStartMs: 0,
+                trimEndMs: 5000,
+                durationMs: 5000,
+                volume: 1,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      3,
+      expect.arrayContaining([
+        "-filter_complex",
+        expect.stringContaining("[a0]apad,atrim=0:2,asetpts=PTS-STARTPTS[a]"),
+      ]),
+    );
   });
 
   it("renders dissolve transition operations with xfade and concatenates the dissolve output", async () => {
