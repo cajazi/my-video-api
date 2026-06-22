@@ -113,6 +113,10 @@ const transitionSchema = z.object({
   durationMs: z.number().int().positive(),
 });
 
+function getMinimumFrameDurationMs(fps: (typeof EXPORT_FPS_VALUES)[number]) {
+  return 1000 / fps;
+}
+
 export const editSpecV1Schema = z
   .object({
     version: z.literal(EDIT_SPEC_V1_VERSION),
@@ -157,10 +161,20 @@ export const editSpecV1Schema = z
     }
 
     const transitionBoundaries = new Set<string>();
+    const dissolveWindowsByClipId = new Map<string, { incomingMs: number; outgoingMs: number }>();
+    const minimumFrameDurationMs = getMinimumFrameDurationMs(editSpec.timeline.exportSettings.fps);
 
     for (const [transitionIndex, transition] of editSpec.timeline.transitions.entries()) {
       const from = clipsById.get(transition.fromClipId);
       const to = clipsById.get(transition.toClipId);
+
+      if (transition.type === "dissolve" && transition.durationMs < minimumFrameDurationMs) {
+        context.addIssue({
+          code: "custom",
+          message: "dissolve durationMs must be at least one frame at export fps",
+          path: ["timeline", "transitions", transitionIndex, "durationMs"],
+        });
+      }
 
       if (!from) {
         context.addIssue({
@@ -213,13 +227,41 @@ export const editSpecV1Schema = z
       }
 
       if (
-        transition.durationMs > from.clip.durationMs / 2 ||
-        transition.durationMs > to.clip.durationMs / 2
+        transition.type !== "dissolve" &&
+        (transition.durationMs > from.clip.durationMs / 2 ||
+          transition.durationMs > to.clip.durationMs / 2)
       ) {
         context.addIssue({
           code: "custom",
           message: "transition durationMs must not exceed 50% of either adjacent clip duration",
           path: ["timeline", "transitions", transitionIndex, "durationMs"],
+        });
+      }
+
+      if (transition.type === "dissolve") {
+        const fromWindows = dissolveWindowsByClipId.get(transition.fromClipId) ?? { incomingMs: 0, outgoingMs: 0 };
+        fromWindows.outgoingMs += transition.durationMs;
+        dissolveWindowsByClipId.set(transition.fromClipId, fromWindows);
+
+        const toWindows = dissolveWindowsByClipId.get(transition.toClipId) ?? { incomingMs: 0, outgoingMs: 0 };
+        toWindows.incomingMs += transition.durationMs;
+        dissolveWindowsByClipId.set(transition.toClipId, toWindows);
+      }
+    }
+
+    for (const [clipId, windows] of dissolveWindowsByClipId.entries()) {
+      const clip = clipsById.get(clipId)?.clip;
+
+      if (!clip) {
+        continue;
+      }
+
+      if (windows.incomingMs + windows.outgoingMs >= clip.durationMs) {
+        const clipIndex = clipsById.get(clipId)?.index ?? 0;
+        context.addIssue({
+          code: "custom",
+          message: "sum of incoming and outgoing dissolve durationMs must be less than clip durationMs",
+          path: ["timeline", "tracks", 0, "clips", clipIndex, "durationMs"],
         });
       }
     }
