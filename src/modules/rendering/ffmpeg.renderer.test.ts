@@ -7,6 +7,8 @@ const editJobId = "0f6979d0-4db1-49f7-b99f-6f5b6f706286";
 const userId = "c6218031-5061-4f49-a9fc-14f7f06798d0";
 const videoId = "b5ff818d-5a1c-4bc0-9288-2a05377a8e58";
 const localTestVideoPath = "C:\\tmp\\sample.mp4";
+const audioAssetPath = "C:\\tmp\\audio-asset-1.mp3";
+const secondAudioAssetPath = "C:\\tmp\\audio-asset-2.mp3";
 const exportSettings = {
   resolutionPreset: "1080p",
   width: 1080,
@@ -43,6 +45,22 @@ function createInput(overrides: { startMs?: number; endMs?: number; segments?: u
       ...(overrides.audioTracks ? { audioTracks: overrides.audioTracks } : {}),
     },
   };
+}
+
+function createResolver(overrides: Record<string, string | null | undefined> = {}) {
+  const assetPaths: Record<string, string | null | undefined> = {
+    "audio-asset-1": audioAssetPath,
+    "audio-asset-2": secondAudioAssetPath,
+    ...overrides,
+  };
+
+  return vi.fn((input: { kind: string; assetId?: string }) => {
+    if (input.kind === "audio" && input.assetId) {
+      return assetPaths[input.assetId];
+    }
+
+    return undefined;
+  });
 }
 
 describe("FFmpegRenderer", () => {
@@ -205,6 +223,7 @@ describe("FFmpegRenderer", () => {
       executeFfmpeg,
       createWorkspace: vi.fn().mockResolvedValue(undefined),
       writeConcatList,
+      resolveMediaAsset: createResolver(),
       now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
     });
     const workspacePath = path.resolve(process.cwd(), "tmp", "jobs", editJobId);
@@ -275,6 +294,7 @@ describe("FFmpegRenderer", () => {
       executeFfmpeg,
       createWorkspace: vi.fn().mockResolvedValue(undefined),
       writeConcatList,
+      resolveMediaAsset: createResolver(),
       now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
     });
     const workspacePath = path.resolve(process.cwd(), "tmp", "jobs", editJobId);
@@ -310,7 +330,7 @@ describe("FFmpegRenderer", () => {
     expect(executeFfmpeg).toHaveBeenNthCalledWith(3, [
       "-y",
       "-i",
-      localTestVideoPath,
+      audioAssetPath,
       "-filter_complex",
       "[0:a]atrim=start=1:end=3,asetpts=PTS-STARTPTS,volume=0.8,adelay=0|0[a0];[a0]apad,atrim=0:3,asetpts=PTS-STARTPTS[a]",
       "-map",
@@ -346,6 +366,7 @@ describe("FFmpegRenderer", () => {
       executeFfmpeg,
       createWorkspace: vi.fn().mockResolvedValue(undefined),
       writeConcatList: vi.fn().mockResolvedValue(undefined),
+      resolveMediaAsset: createResolver(),
       now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
     });
 
@@ -390,6 +411,7 @@ describe("FFmpegRenderer", () => {
       executeFfmpeg,
       createWorkspace: vi.fn().mockResolvedValue(undefined),
       writeConcatList: vi.fn().mockResolvedValue(undefined),
+      resolveMediaAsset: createResolver(),
       now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
     });
 
@@ -436,6 +458,7 @@ describe("FFmpegRenderer", () => {
       executeFfmpeg,
       createWorkspace: vi.fn().mockResolvedValue(undefined),
       writeConcatList: vi.fn().mockResolvedValue(undefined),
+      resolveMediaAsset: createResolver(),
       now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
     });
 
@@ -482,9 +505,9 @@ describe("FFmpegRenderer", () => {
       3,
       expect.arrayContaining([
         "-i",
-        localTestVideoPath,
+        audioAssetPath,
         "-i",
-        localTestVideoPath,
+        secondAudioAssetPath,
         "-filter_complex",
         expect.stringContaining("[a0][a1]amix=inputs=2:duration=longest:normalize=0,apad,atrim=0:3"),
       ]),
@@ -499,6 +522,7 @@ describe("FFmpegRenderer", () => {
       executeFfmpeg,
       createWorkspace: vi.fn().mockResolvedValue(undefined),
       writeConcatList: vi.fn().mockResolvedValue(undefined),
+      resolveMediaAsset: createResolver(),
       now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
     });
 
@@ -533,6 +557,49 @@ describe("FFmpegRenderer", () => {
         expect.stringContaining("[a0]apad,atrim=0:2,asetpts=PTS-STARTPTS[a]"),
       ]),
     );
+  });
+
+  it("fails clearly when an audio asset cannot be resolved", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList: vi.fn().mockResolvedValue(undefined),
+      resolveMediaAsset: createResolver({
+        "audio-asset-1": null,
+      }),
+      now: vi.fn().mockReturnValueOnce(1000),
+    });
+
+    await expect(
+      renderer.render(
+        createInput({
+          startMs: 0,
+          endMs: 2000,
+          audioTracks: [
+            {
+              id: "audio-track-1",
+              type: "audio",
+              clips: [
+                {
+                  id: "audio-clip-1",
+                  assetId: "audio-asset-1",
+                  positionMs: 0,
+                  trimStartMs: 0,
+                  trimEndMs: 1000,
+                  durationMs: 1000,
+                  volume: 1,
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow("Audio asset is missing local media path: audio-asset-1");
+
+    expect(executeFfmpeg).not.toHaveBeenCalled();
   });
 
   it("renders dissolve transition operations with xfade and concatenates the dissolve output", async () => {

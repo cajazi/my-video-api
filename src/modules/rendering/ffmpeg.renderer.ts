@@ -26,6 +26,16 @@ type RenderedClipEntry = RenderedMediaEntry & {
 };
 
 type AudioRenderClip = NonNullable<TimelineRenderPlan["audioTracks"]>[number]["clips"][number];
+type MediaAssetResolutionRequest =
+  | {
+      kind: "video";
+      assetId?: string;
+      videoId: string;
+    }
+  | {
+      kind: "audio";
+      assetId: string;
+    };
 type DipTransitionType = "dip_to_black" | "dip_to_white";
 type SlideTransitionType = "slide_left" | "slide_right";
 type ZoomTransitionType = "zoom_in" | "zoom_out";
@@ -37,6 +47,7 @@ type FFmpegRendererDependencies = {
   executeFfmpeg?: (args: string[]) => Promise<void>;
   createWorkspace?: (path: string) => Promise<unknown>;
   writeConcatList?: (path: string, content: string) => Promise<void>;
+  resolveMediaAsset?: (input: MediaAssetResolutionRequest) => Promise<string | null | undefined> | string | null | undefined;
   now?: () => number;
 };
 
@@ -45,6 +56,7 @@ export class FFmpegRenderer implements Renderer {
   private readonly executeFfmpeg: (args: string[]) => Promise<void>;
   private readonly createWorkspace: (path: string) => Promise<unknown>;
   private readonly writeConcatList: (path: string, content: string) => Promise<void>;
+  private readonly resolveMediaAsset?: (input: MediaAssetResolutionRequest) => Promise<string | null | undefined> | string | null | undefined;
   private readonly now: () => number;
 
   constructor(private readonly dependencies: FFmpegRendererDependencies) {
@@ -57,6 +69,7 @@ export class FFmpegRenderer implements Renderer {
           recursive: true,
         }));
     this.writeConcatList = dependencies.writeConcatList ?? writeFile;
+    this.resolveMediaAsset = dependencies.resolveMediaAsset;
     this.now = dependencies.now ?? Date.now;
   }
 
@@ -72,11 +85,14 @@ export class FFmpegRenderer implements Renderer {
     }
 
     const renderPlan = this.parseRenderPlan(input.inputConfig);
+    const hasAudioTracks = this.hasAudioTracks(renderPlan);
+    const audioSourcePaths = hasAudioTracks
+      ? await Promise.all(this.getAudioClips(renderPlan).map((clip) => this.resolveAudioSourcePath(clip)))
+      : [];
 
     const startedAt = this.now();
     const workspacePath = getEditJobWorkspacePath(input.editJobId);
     const localOutputPath = path.join(workspacePath, "output.mp4");
-    const hasAudioTracks = this.hasAudioTracks(renderPlan);
     const videoOutputPath = hasAudioTracks ? path.join(workspacePath, "video-output.mp4") : localOutputPath;
     const mediaSegments = renderPlan.segments.filter((segment): segment is MediaRenderSegment => segment.type !== "transition");
     const segmentOutputPaths = mediaSegments.map((_, index) =>
@@ -103,7 +119,7 @@ export class FFmpegRenderer implements Renderer {
 
     if (hasAudioTracks) {
       const mixedAudioPath = path.join(workspacePath, "mixed-audio.m4a");
-      await this.renderMixedAudio(localTestVideoPath, renderPlan, mixedAudioPath);
+      await this.renderMixedAudio(renderPlan, audioSourcePaths, mixedAudioPath);
       await this.muxAudio(videoOutputPath, mixedAudioPath, localOutputPath);
     }
 
@@ -142,13 +158,36 @@ export class FFmpegRenderer implements Renderer {
     return (renderPlan.audioTracks ?? []).flatMap((track) => track.clips);
   }
 
+  private async resolveVideoSourcePath(fallbackSourcePath: string, segment: ClipRenderSegment) {
+    const resolvedPath = await this.resolveMediaAsset?.({
+      kind: "video",
+      assetId: segment.assetId,
+      videoId: segment.sourceVideoId,
+    });
+
+    return resolvedPath?.trim() || fallbackSourcePath;
+  }
+
+  private async resolveAudioSourcePath(clip: AudioRenderClip) {
+    const resolvedPath = await this.resolveMediaAsset?.({
+      kind: "audio",
+      assetId: clip.assetId,
+    });
+
+    if (!resolvedPath?.trim()) {
+      throw new Error(`Audio asset is missing local media path: ${clip.assetId}`);
+    }
+
+    return resolvedPath;
+  }
+
   private async renderSegment(sourcePath: string, segment: MediaRenderSegment, outputPath: string) {
     if (segment.type === "filler") {
       await this.renderBlackFiller(segment, outputPath);
       return;
     }
 
-    await this.trimSegment(sourcePath, segment, outputPath);
+    await this.trimSegment(await this.resolveVideoSourcePath(sourcePath, segment), segment, outputPath);
   }
 
   private async trimSegment(
@@ -502,10 +541,10 @@ export class FFmpegRenderer implements Renderer {
     ]);
   }
 
-  private async renderMixedAudio(sourcePath: string, renderPlan: TimelineRenderPlan, outputPath: string) {
+  private async renderMixedAudio(renderPlan: TimelineRenderPlan, audioSourcePaths: string[], outputPath: string) {
     const audioClips = this.getAudioClips(renderPlan);
     const videoDurationSeconds = this.getVideoOutputDurationMs(renderPlan) / 1000;
-    const inputArgs = audioClips.flatMap(() => ["-i", sourcePath]);
+    const inputArgs = audioSourcePaths.flatMap((sourcePath) => ["-i", sourcePath]);
     const clipFilters = audioClips.map((clip, index) => {
       const fadeInFilter = clip.fadeInMs ? `,afade=t=in:st=0:d=${clip.fadeInMs / 1000}` : "";
       const fadeOutFilter = clip.fadeOutMs

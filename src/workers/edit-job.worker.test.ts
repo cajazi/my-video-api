@@ -107,6 +107,13 @@ function createFfmpegRenderingService(inputConfig: unknown, executeFfmpeg: (args
     createWorkspace: vi.fn().mockResolvedValue(undefined),
     writeConcatList: vi.fn().mockResolvedValue(undefined),
     executeFfmpeg,
+    resolveMediaAsset: vi.fn((input: { kind: string; assetId?: string }) => {
+      if (input.kind === "audio" && input.assetId) {
+        return `C:\\tmp\\${input.assetId}.mp3`;
+      }
+
+      return undefined;
+    }),
     now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1250),
   });
 
@@ -337,6 +344,7 @@ describe("processEditJob", () => {
 
     expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["-ss", "1.5", "-to", "4"]));
     expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["-f", "concat"]));
+    expect(executeFfmpeg).toHaveBeenCalledWith(expect.arrayContaining(["-i", "C:\\tmp\\audio-asset-1.mp3"]));
     expect(executeFfmpeg).toHaveBeenCalledWith(
       expect.arrayContaining([
         "-filter_complex",
