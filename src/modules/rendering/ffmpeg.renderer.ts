@@ -26,6 +26,7 @@ type RenderedClipEntry = RenderedMediaEntry & {
 };
 
 type DipTransitionType = "dip_to_black" | "dip_to_white";
+type RenderedTransitionType = "dissolve" | DipTransitionType;
 
 type FFmpegRendererDependencies = {
   localTestVideoPath: string;
@@ -180,35 +181,13 @@ export class FFmpegRenderer implements Renderer {
       }
 
       if (segment.type === "clip" && renderPlan.segments[index + 1]?.type === "transition") {
-        const firstTransition = renderPlan.segments[index + 1] as TransitionRenderOperation;
-
-        if (this.isDipTransition(firstTransition)) {
-          if (renderPlan.segments[index + 3]?.type === "transition") {
-            throw new Error(`Unsupported transition renderer: ${firstTransition.transitionType}`);
-          }
-
-          const fromEntry = mediaByClipId.get(firstTransition.fromClipId);
-          const toEntry = mediaByClipId.get(firstTransition.toClipId);
-
-          if (!fromEntry || !toEntry) {
-            throw new Error("Dip transition requires rendered adjacent clip media");
-          }
-
-          const outputPath = path.join(workspacePath, `dip-${String(transitionIndex).padStart(3, "0")}.mp4`);
-          await this.renderDipBoundary(fromEntry, toEntry, firstTransition, outputPath);
-          physicalOutputPaths.push(outputPath);
-          transitionIndex += 1;
-          index += 2;
-          continue;
-        }
-
         const chainClipEntries: RenderedClipEntry[] = [];
-        const chainTransitions: TransitionRenderOperation[] = [];
+        const chainTransitions: (TransitionRenderOperation & { transitionType: RenderedTransitionType })[] = [];
         let cursor = index;
         const firstEntry = mediaByClipId.get(segment.clipId);
 
         if (!firstEntry) {
-          throw new Error("Dissolve transition requires rendered adjacent clip media");
+          throw new Error("Transition requires rendered adjacent clip media");
         }
 
         chainClipEntries.push(firstEntry);
@@ -216,14 +195,14 @@ export class FFmpegRenderer implements Renderer {
         while (renderPlan.segments[cursor + 1]?.type === "transition") {
           const transition = renderPlan.segments[cursor + 1] as TransitionRenderOperation;
 
-          if (transition.transitionType !== "dissolve") {
+          if (!this.isRenderedTransition(transition)) {
             throw new Error(`Unsupported transition renderer: ${transition.transitionType}`);
           }
 
           const toEntry = mediaByClipId.get(transition.toClipId);
 
           if (!toEntry) {
-            throw new Error("Dissolve transition requires rendered adjacent clip media");
+            throw new Error("Transition requires rendered adjacent clip media");
           }
 
           chainTransitions.push(transition);
@@ -231,8 +210,20 @@ export class FFmpegRenderer implements Renderer {
           cursor += 2;
         }
 
-        const outputPath = path.join(workspacePath, `dissolve-${String(transitionIndex).padStart(3, "0")}.mp4`);
-        await this.renderDissolveChain(chainClipEntries, chainTransitions, outputPath);
+        const isDissolveOnlyChain = chainTransitions.every((transition) => transition.transitionType === "dissolve");
+        const outputPrefix = isDissolveOnlyChain
+          ? "dissolve"
+          : chainTransitions.length === 1 && this.isDipTransition(chainTransitions[0])
+            ? "dip"
+            : "transition-chain";
+        const outputPath = path.join(workspacePath, `${outputPrefix}-${String(transitionIndex).padStart(3, "0")}.mp4`);
+
+        if (isDissolveOnlyChain) {
+          await this.renderDissolveChain(chainClipEntries, chainTransitions, outputPath);
+        } else {
+          await this.renderMixedTransitionChain(chainClipEntries, chainTransitions, outputPath);
+        }
+
         physicalOutputPaths.push(outputPath);
         transitionIndex += 1;
         index = cursor;
@@ -249,6 +240,12 @@ export class FFmpegRenderer implements Renderer {
     return physicalOutputPaths;
   }
 
+  private isRenderedTransition(transition: TransitionRenderOperation): transition is TransitionRenderOperation & {
+    transitionType: RenderedTransitionType;
+  } {
+    return transition.transitionType === "dissolve" || this.isDipTransition(transition);
+  }
+
   private isDipTransition(transition: TransitionRenderOperation): transition is TransitionRenderOperation & {
     transitionType: DipTransitionType;
   } {
@@ -259,44 +256,93 @@ export class FFmpegRenderer implements Renderer {
     return transitionType === "dip_to_black" ? "0x000000" : "0xFFFFFF";
   }
 
-  private async renderDipBoundary(
-    fromEntry: RenderedClipEntry,
-    toEntry: RenderedClipEntry,
-    transition: TransitionRenderOperation & { transitionType: DipTransitionType },
+  private async renderMixedTransitionChain(
+    clipEntries: RenderedClipEntry[],
+    transitions: (TransitionRenderOperation & { transitionType: RenderedTransitionType })[],
     outputPath: string,
   ) {
-    const { width, height, fps } = transition.exportSettings;
-    const halfDurationMs = transition.durationMs / 2;
-    const halfDurationSeconds = halfDurationMs / 1000;
-    const fromDurationSeconds = fromEntry.segment.durationMs / 1000;
-    const toDurationSeconds = toEntry.segment.durationMs / 1000;
-    const outgoingBodyEndSeconds = (fromEntry.segment.durationMs - halfDurationMs) / 1000;
-    const color = this.getDipColor(transition.transitionType);
-    const filter = [
-      `[0:v]scale=${width}:${height},fps=${fps},format=yuv420p,setpts=PTS-STARTPTS[v0]`,
-      `[1:v]scale=${width}:${height},fps=${fps},format=yuv420p,setpts=PTS-STARTPTS[v1]`,
-      "[2:v]format=yuv420p,setpts=PTS-STARTPTS,split=2[colorout][colorin]",
-      `[v0]trim=start=0:end=${outgoingBodyEndSeconds},setpts=PTS-STARTPTS[outbody]`,
-      `[v0]trim=start=${outgoingBodyEndSeconds}:end=${fromDurationSeconds},setpts=PTS-STARTPTS[outtail]`,
-      `[outtail][colorout]xfade=transition=fade:duration=${halfDurationSeconds}:offset=0[outfade]`,
-      `[v1]trim=start=0:end=${halfDurationSeconds},setpts=PTS-STARTPTS[intail]`,
-      `[colorin][intail]xfade=transition=fade:duration=${halfDurationSeconds}:offset=0[infade]`,
-      `[v1]trim=start=${halfDurationSeconds}:end=${toDurationSeconds},setpts=PTS-STARTPTS[inbody]`,
-      "[outbody][outfade][infade][inbody]concat=n=4:v=1:a=0[v]",
-    ].join(";");
+    const { width, height, fps } = transitions[0].exportSettings;
+    const clipInputArgs = clipEntries.flatMap((entry) => ["-i", entry.outputPath]);
+    const dipTransitions = transitions.filter((transition) => this.isDipTransition(transition));
+    const colorInputArgs = dipTransitions.flatMap((transition) => {
+      const color = this.getDipColor(transition.transitionType);
+
+      return [
+        "-f",
+        "lavfi",
+        "-i",
+        `color=c=${color}:s=${width}x${height}:r=${fps}:d=${transition.durationMs / 2000}`,
+      ];
+    });
+    const filters = clipEntries.map(
+      (_, index) => `[${index}:v]scale=${width}:${height},fps=${fps},format=yuv420p,setpts=PTS-STARTPTS[v${index}]`,
+    );
+    const concatLabels: string[] = [];
+    let dipInputOffset = clipEntries.length;
+    let dipIndex = 0;
+
+    const pushClipBody = (clipIndex: number, startMs: number, endMs: number) => {
+      if (endMs <= startMs) {
+        return;
+      }
+
+      const label = `body${concatLabels.length}`;
+      filters.push(
+        `[v${clipIndex}]trim=start=${startMs / 1000}:end=${endMs / 1000},setpts=PTS-STARTPTS[${label}]`,
+      );
+      concatLabels.push(label);
+    };
+
+    pushClipBody(0, 0, clipEntries[0].segment.durationMs - transitions[0].durationMs);
+
+    for (const [index, transition] of transitions.entries()) {
+      const fromClip = clipEntries[index].segment;
+      const toClip = clipEntries[index + 1].segment;
+      const transitionLabel = `transition${index}`;
+
+      if (transition.transitionType === "dissolve") {
+        filters.push(
+          `[v${index}]trim=start=${(fromClip.durationMs - transition.durationMs) / 1000}:end=${fromClip.durationMs / 1000},setpts=PTS-STARTPTS[out${index}]`,
+          `[v${index + 1}]trim=start=0:end=${transition.durationMs / 1000},setpts=PTS-STARTPTS[in${index}]`,
+          `[out${index}][in${index}]xfade=transition=fade:duration=${transition.durationMs / 1000}:offset=0[${transitionLabel}]`,
+        );
+      } else {
+        const halfDurationMs = transition.durationMs / 2;
+        const colorInputIndex = dipInputOffset;
+        const colorOutLabel = `colorout${dipIndex}`;
+        const colorInLabel = `colorin${dipIndex}`;
+
+        filters.push(
+          `[${colorInputIndex}:v]format=yuv420p,setpts=PTS-STARTPTS,split=2[${colorOutLabel}][${colorInLabel}]`,
+          `[v${index}]trim=start=${(fromClip.durationMs - transition.durationMs) / 1000}:end=${(fromClip.durationMs - halfDurationMs) / 1000},setpts=PTS-STARTPTS[out${index}]`,
+          `[out${index}][${colorOutLabel}]xfade=transition=fade:duration=${halfDurationMs / 1000}:offset=0[outfade${index}]`,
+          `[v${index + 1}]trim=start=0:end=${halfDurationMs / 1000},setpts=PTS-STARTPTS[in${index}]`,
+          `[${colorInLabel}][in${index}]xfade=transition=fade:duration=${halfDurationMs / 1000}:offset=0[infade${index}]`,
+          `[outfade${index}][infade${index}]concat=n=2:v=1:a=0[${transitionLabel}]`,
+        );
+
+        dipInputOffset += 1;
+        dipIndex += 1;
+      }
+
+      concatLabels.push(transitionLabel);
+
+      const nextTransition = transitions[index + 1];
+      pushClipBody(
+        index + 1,
+        transition.durationMs,
+        toClip.durationMs - (nextTransition?.durationMs ?? 0),
+      );
+    }
+
+    filters.push(`[${concatLabels.join("][")}]concat=n=${concatLabels.length}:v=1:a=0[v]`);
 
     await this.executeFfmpeg([
       "-y",
-      "-i",
-      fromEntry.outputPath,
-      "-i",
-      toEntry.outputPath,
-      "-f",
-      "lavfi",
-      "-i",
-      `color=c=${color}:s=${width}x${height}:r=${fps}:d=${halfDurationSeconds}`,
+      ...clipInputArgs,
+      ...colorInputArgs,
       "-filter_complex",
-      filter,
+      filters.join(";"),
       "-map",
       "[v]",
       "-an",

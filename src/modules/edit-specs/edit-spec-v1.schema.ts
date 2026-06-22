@@ -161,7 +161,7 @@ export const editSpecV1Schema = z
     }
 
     const transitionBoundaries = new Set<string>();
-    const dissolveWindowsByClipId = new Map<string, { incomingMs: number; outgoingMs: number }>();
+    const transitionWindowsByClipId = new Map<string, { incomingMs: number; outgoingMs: number }>();
     const minimumFrameDurationMs = getMinimumFrameDurationMs(editSpec.timeline.exportSettings.fps);
 
     for (const [transitionIndex, transition] of editSpec.timeline.transitions.entries()) {
@@ -238,18 +238,18 @@ export const editSpecV1Schema = z
         });
       }
 
-      if (transition.type === "dissolve") {
-        const fromWindows = dissolveWindowsByClipId.get(transition.fromClipId) ?? { incomingMs: 0, outgoingMs: 0 };
+      if (transition.type === "dissolve" || transition.type === "dip_to_black" || transition.type === "dip_to_white") {
+        const fromWindows = transitionWindowsByClipId.get(transition.fromClipId) ?? { incomingMs: 0, outgoingMs: 0 };
         fromWindows.outgoingMs += transition.durationMs;
-        dissolveWindowsByClipId.set(transition.fromClipId, fromWindows);
+        transitionWindowsByClipId.set(transition.fromClipId, fromWindows);
 
-        const toWindows = dissolveWindowsByClipId.get(transition.toClipId) ?? { incomingMs: 0, outgoingMs: 0 };
+        const toWindows = transitionWindowsByClipId.get(transition.toClipId) ?? { incomingMs: 0, outgoingMs: 0 };
         toWindows.incomingMs += transition.durationMs;
-        dissolveWindowsByClipId.set(transition.toClipId, toWindows);
+        transitionWindowsByClipId.set(transition.toClipId, toWindows);
       }
     }
 
-    for (const [clipId, windows] of dissolveWindowsByClipId.entries()) {
+    for (const [clipId, windows] of transitionWindowsByClipId.entries()) {
       const clip = clipsById.get(clipId)?.clip;
 
       if (!clip) {
@@ -260,7 +260,7 @@ export const editSpecV1Schema = z
         const clipIndex = clipsById.get(clipId)?.index ?? 0;
         context.addIssue({
           code: "custom",
-          message: "sum of incoming and outgoing dissolve durationMs must be less than clip durationMs",
+          message: "sum of incoming and outgoing transition durationMs must be less than clip durationMs",
           path: ["timeline", "tracks", 0, "clips", clipIndex, "durationMs"],
         });
       }

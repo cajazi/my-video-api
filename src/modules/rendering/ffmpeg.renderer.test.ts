@@ -515,7 +515,7 @@ describe("FFmpegRenderer", () => {
         "-i",
         "color=c=0x000000:s=1080x1920:r=60:d=0.25",
         "-filter_complex",
-        "[0:v]scale=1080:1920,fps=60,format=yuv420p,setpts=PTS-STARTPTS[v0];[1:v]scale=1080:1920,fps=60,format=yuv420p,setpts=PTS-STARTPTS[v1];[2:v]format=yuv420p,setpts=PTS-STARTPTS,split=2[colorout][colorin];[v0]trim=start=0:end=1.75,setpts=PTS-STARTPTS[outbody];[v0]trim=start=1.75:end=2,setpts=PTS-STARTPTS[outtail];[outtail][colorout]xfade=transition=fade:duration=0.25:offset=0[outfade];[v1]trim=start=0:end=0.25,setpts=PTS-STARTPTS[intail];[colorin][intail]xfade=transition=fade:duration=0.25:offset=0[infade];[v1]trim=start=0.25:end=2,setpts=PTS-STARTPTS[inbody];[outbody][outfade][infade][inbody]concat=n=4:v=1:a=0[v]",
+        "[0:v]scale=1080:1920,fps=60,format=yuv420p,setpts=PTS-STARTPTS[v0];[1:v]scale=1080:1920,fps=60,format=yuv420p,setpts=PTS-STARTPTS[v1];[v0]trim=start=0:end=1.5,setpts=PTS-STARTPTS[body0];[2:v]format=yuv420p,setpts=PTS-STARTPTS,split=2[colorout0][colorin0];[v0]trim=start=1.5:end=1.75,setpts=PTS-STARTPTS[out0];[out0][colorout0]xfade=transition=fade:duration=0.25:offset=0[outfade0];[v1]trim=start=0:end=0.25,setpts=PTS-STARTPTS[in0];[colorin0][in0]xfade=transition=fade:duration=0.25:offset=0[infade0];[outfade0][infade0]concat=n=2:v=1:a=0[transition0];[v1]trim=start=0.5:end=2,setpts=PTS-STARTPTS[body2];[body0][transition0][body2]concat=n=3:v=1:a=0[v]",
         dipPath,
       ]),
     );
@@ -586,14 +586,275 @@ describe("FFmpegRenderer", () => {
       expect.arrayContaining([
         "color=c=0xFFFFFF:s=1080x1920:r=60:d=0.5",
         "-filter_complex",
-        expect.stringContaining("[outtail][colorout]xfade=transition=fade:duration=0.5:offset=0[outfade]"),
+        expect.stringContaining("[out0][colorout0]xfade=transition=fade:duration=0.5:offset=0[outfade0]"),
         dipPath,
       ]),
     );
     expect(executeFfmpeg).toHaveBeenNthCalledWith(
       3,
       expect.arrayContaining([
-        expect.stringContaining("[colorin][intail]xfade=transition=fade:duration=0.5:offset=0[infade]"),
+        expect.stringContaining("[colorin0][in0]xfade=transition=fade:duration=0.5:offset=0[infade0]"),
+      ]),
+    );
+  });
+
+  it("renders chained dip_to_black followed by dip_to_white without duplicating the middle clip", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const writeConcatList = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList,
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
+    });
+    const workspacePath = path.resolve(process.cwd(), "tmp", "jobs", editJobId);
+    const chainPath = path.join(workspacePath, "transition-chain-000.mp4");
+    const concatListPath = path.join(workspacePath, "concat-list.txt");
+
+    await renderer.render(
+      createInput({
+        segments: [
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-1",
+            sourceVideoId: videoId,
+            timelineStartMs: 0,
+            timelineEndMs: 3000,
+            trimStartMs: 0,
+            trimEndMs: 3000,
+            durationMs: 3000,
+          },
+          {
+            type: "transition",
+            exportSettings,
+            transitionId: "transition-1",
+            transitionType: "dip_to_black",
+            fromClipId: "clip-1",
+            toClipId: "clip-2",
+            timelineStartMs: 3000,
+            durationMs: 1000,
+            outputTimelineDurationMs: 1000,
+          },
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-2",
+            sourceVideoId: videoId,
+            timelineStartMs: 3000,
+            timelineEndMs: 7000,
+            trimStartMs: 5000,
+            trimEndMs: 9000,
+            durationMs: 4000,
+          },
+          {
+            type: "transition",
+            exportSettings,
+            transitionId: "transition-2",
+            transitionType: "dip_to_white",
+            fromClipId: "clip-2",
+            toClipId: "clip-3",
+            timelineStartMs: 7000,
+            durationMs: 500,
+            outputTimelineDurationMs: 500,
+          },
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-3",
+            sourceVideoId: videoId,
+            timelineStartMs: 7000,
+            timelineEndMs: 9000,
+            trimStartMs: 12000,
+            trimEndMs: 14000,
+            durationMs: 2000,
+          },
+        ],
+      }),
+    );
+
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      4,
+      expect.arrayContaining([
+        "color=c=0x000000:s=1080x1920:r=60:d=0.5",
+        "color=c=0xFFFFFF:s=1080x1920:r=60:d=0.25",
+        "-filter_complex",
+        expect.stringContaining("[body0][transition0][body2][transition1][body4]concat=n=5:v=1:a=0[v]"),
+        chainPath,
+      ]),
+    );
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      4,
+      expect.arrayContaining([
+        expect.stringMatching(/\[v1\]trim=start=1:end=3\.5,setpts=PTS-STARTPTS\[body2\]/),
+      ]),
+    );
+    expect(writeConcatList).toHaveBeenCalledWith(concatListPath, `file '${chainPath}'`);
+    expect(executeFfmpeg).toHaveBeenCalledTimes(5);
+  });
+
+  it("renders dissolve followed by dip_to_black in timeline order", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList: vi.fn().mockResolvedValue(undefined),
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
+    });
+
+    await renderer.render(
+      createInput({
+        segments: [
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-1",
+            sourceVideoId: videoId,
+            timelineStartMs: 0,
+            timelineEndMs: 3000,
+            trimStartMs: 0,
+            trimEndMs: 3000,
+            durationMs: 3000,
+          },
+          {
+            type: "transition",
+            exportSettings,
+            transitionId: "transition-1",
+            transitionType: "dissolve",
+            fromClipId: "clip-1",
+            toClipId: "clip-2",
+            timelineStartMs: 3000,
+            durationMs: 1000,
+            outputTimelineDurationMs: 1000,
+          },
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-2",
+            sourceVideoId: videoId,
+            timelineStartMs: 3000,
+            timelineEndMs: 7000,
+            trimStartMs: 5000,
+            trimEndMs: 9000,
+            durationMs: 4000,
+          },
+          {
+            type: "transition",
+            exportSettings,
+            transitionId: "transition-2",
+            transitionType: "dip_to_black",
+            fromClipId: "clip-2",
+            toClipId: "clip-3",
+            timelineStartMs: 7000,
+            durationMs: 500,
+            outputTimelineDurationMs: 500,
+          },
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-3",
+            sourceVideoId: videoId,
+            timelineStartMs: 7000,
+            timelineEndMs: 9000,
+            trimStartMs: 12000,
+            trimEndMs: 14000,
+            durationMs: 2000,
+          },
+        ],
+      }),
+    );
+
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      4,
+      expect.arrayContaining([
+        "-filter_complex",
+        expect.stringMatching(/\[out0\]\[in0\]xfade=transition=fade:duration=1:offset=0\[transition0\].*\[out1\]\[colorout0\]xfade=transition=fade:duration=0\.25:offset=0\[outfade1\]/),
+      ]),
+    );
+  });
+
+  it("renders dip_to_white followed by dissolve in timeline order", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList: vi.fn().mockResolvedValue(undefined),
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
+    });
+
+    await renderer.render(
+      createInput({
+        segments: [
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-1",
+            sourceVideoId: videoId,
+            timelineStartMs: 0,
+            timelineEndMs: 3000,
+            trimStartMs: 0,
+            trimEndMs: 3000,
+            durationMs: 3000,
+          },
+          {
+            type: "transition",
+            exportSettings,
+            transitionId: "transition-1",
+            transitionType: "dip_to_white",
+            fromClipId: "clip-1",
+            toClipId: "clip-2",
+            timelineStartMs: 3000,
+            durationMs: 1000,
+            outputTimelineDurationMs: 1000,
+          },
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-2",
+            sourceVideoId: videoId,
+            timelineStartMs: 3000,
+            timelineEndMs: 7000,
+            trimStartMs: 5000,
+            trimEndMs: 9000,
+            durationMs: 4000,
+          },
+          {
+            type: "transition",
+            exportSettings,
+            transitionId: "transition-2",
+            transitionType: "dissolve",
+            fromClipId: "clip-2",
+            toClipId: "clip-3",
+            timelineStartMs: 7000,
+            durationMs: 500,
+            outputTimelineDurationMs: 500,
+          },
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-3",
+            sourceVideoId: videoId,
+            timelineStartMs: 7000,
+            timelineEndMs: 9000,
+            trimStartMs: 12000,
+            trimEndMs: 14000,
+            durationMs: 2000,
+          },
+        ],
+      }),
+    );
+
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      4,
+      expect.arrayContaining([
+        "-filter_complex",
+        expect.stringMatching(/\[out0\]\[colorout0\]xfade=transition=fade:duration=0\.5:offset=0\[outfade0\].*\[out1\]\[in1\]xfade=transition=fade:duration=0\.5:offset=0\[transition1\]/),
       ]),
     );
   });
