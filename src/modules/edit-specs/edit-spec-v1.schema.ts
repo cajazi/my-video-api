@@ -105,6 +105,50 @@ const videoTrackSchema = z.object({
   clips: z.array(clipTimingSchema).min(1),
 });
 
+const audioClipTimingSchema = z
+  .object({
+    id: z.string().min(1),
+    assetId: z.string().min(1),
+    positionMs: z.number().int().min(0),
+    trimStartMs: z.number().int().min(0),
+    trimEndMs: z.number().int().min(0),
+    durationMs: z.number().int().positive(),
+    volume: z.number().min(0).max(1),
+    fadeInMs: z.number().int().min(0).optional(),
+    fadeOutMs: z.number().int().min(0).optional(),
+  })
+  .superRefine((clip, context) => {
+    if (clip.trimEndMs <= clip.trimStartMs) {
+      context.addIssue({
+        code: "custom",
+        message: "trimEndMs must be greater than trimStartMs",
+        path: ["trimEndMs"],
+      });
+    }
+
+    if (clip.durationMs !== clip.trimEndMs - clip.trimStartMs) {
+      context.addIssue({
+        code: "custom",
+        message: "durationMs must equal trimEndMs - trimStartMs",
+        path: ["durationMs"],
+      });
+    }
+
+    if ((clip.fadeInMs ?? 0) + (clip.fadeOutMs ?? 0) > clip.durationMs) {
+      context.addIssue({
+        code: "custom",
+        message: "fadeInMs plus fadeOutMs must not exceed durationMs",
+        path: ["fadeInMs"],
+      });
+    }
+  });
+
+const audioTrackSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal("audio"),
+  clips: z.array(audioClipTimingSchema),
+});
+
 const transitionSchema = z.object({
   id: z.string().min(1),
   type: z.enum(TRANSITION_TYPES),
@@ -123,6 +167,7 @@ export const editSpecV1Schema = z
     timeline: z.object({
       exportSettings: exportSettingsSchema,
       tracks: z.array(videoTrackSchema).length(1),
+      audioTracks: z.array(audioTrackSchema).default([]),
       transitions: z.array(transitionSchema).default([]),
     }),
   })
@@ -271,6 +316,26 @@ export const editSpecV1Schema = z
           message: "sum of incoming and outgoing transition durationMs must be less than clip durationMs",
           path: ["timeline", "tracks", 0, "clips", clipIndex, "durationMs"],
         });
+      }
+    }
+
+    for (const [trackIndex, audioTrack] of editSpec.timeline.audioTracks.entries()) {
+      const sortedAudioClips = audioTrack.clips
+        .map((clip, clipIndex) => ({ clip, clipIndex }))
+        .sort((left, right) => left.clip.positionMs - right.clip.positionMs);
+
+      for (let index = 1; index < sortedAudioClips.length; index += 1) {
+        const previous = sortedAudioClips[index - 1];
+        const current = sortedAudioClips[index];
+        const previousEndMs = previous.clip.positionMs + previous.clip.durationMs;
+
+        if (current.clip.positionMs < previousEndMs) {
+          context.addIssue({
+            code: "custom",
+            message: "audio clips on the same track must not overlap",
+            path: ["timeline", "audioTracks", trackIndex, "clips", current.clipIndex, "positionMs"],
+          });
+        }
       }
     }
   });
