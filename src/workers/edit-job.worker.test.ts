@@ -734,6 +734,128 @@ describe("processEditJob", () => {
     expect(dependencies.renderedOutputStorage.uploadRenderedOutput).toHaveBeenCalled();
   });
 
+  it("processes a V1 edit spec with a zoom_in transition through the FFmpeg render path", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const renderingService = createFfmpegRenderingService(
+      {
+        ...editSpec,
+        timeline: {
+          ...editSpec.timeline,
+          tracks: [
+            {
+              id: "track-1",
+              type: "video",
+              clips: [
+                {
+                  id: "clip-1",
+                  assetId: "asset-1",
+                  videoId: validPayload.videoId,
+                  positionMs: 0,
+                  trimStartMs: 0,
+                  trimEndMs: 3000,
+                  durationMs: 3000,
+                },
+                {
+                  id: "clip-2",
+                  assetId: "asset-2",
+                  videoId: validPayload.videoId,
+                  positionMs: 3000,
+                  trimStartMs: 5000,
+                  trimEndMs: 8000,
+                  durationMs: 3000,
+                },
+              ],
+            },
+          ],
+          transitions: [
+            {
+              id: "transition-1",
+              type: "zoom_in",
+              fromClipId: "clip-1",
+              toClipId: "clip-2",
+              durationMs: 1000,
+            },
+          ],
+        },
+      },
+      executeFfmpeg,
+    );
+    const dependencies = createDependencies({
+      renderEditJob: renderingService.renderEditJob.bind(renderingService),
+    });
+
+    await processEditJob(createJob(validPayload), dependencies);
+
+    expect(executeFfmpeg).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "-filter_complex",
+        expect.stringContaining("[outzoom0][inzoom0]blend=all_expr='A*(1-T/1)+B*(T/1)'[transition0]"),
+      ]),
+    );
+    expect(dependencies.renderedOutputStorage.uploadRenderedOutput).toHaveBeenCalled();
+  });
+
+  it("processes a V1 edit spec with a zoom_out transition through the FFmpeg render path", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const renderingService = createFfmpegRenderingService(
+      {
+        ...editSpec,
+        timeline: {
+          ...editSpec.timeline,
+          tracks: [
+            {
+              id: "track-1",
+              type: "video",
+              clips: [
+                {
+                  id: "clip-1",
+                  assetId: "asset-1",
+                  videoId: validPayload.videoId,
+                  positionMs: 0,
+                  trimStartMs: 0,
+                  trimEndMs: 2000,
+                  durationMs: 2000,
+                },
+                {
+                  id: "clip-2",
+                  assetId: "asset-2",
+                  videoId: validPayload.videoId,
+                  positionMs: 2000,
+                  trimStartMs: 5000,
+                  trimEndMs: 7000,
+                  durationMs: 2000,
+                },
+              ],
+            },
+          ],
+          transitions: [
+            {
+              id: "transition-1",
+              type: "zoom_out",
+              fromClipId: "clip-1",
+              toClipId: "clip-2",
+              durationMs: 500,
+            },
+          ],
+        },
+      },
+      executeFfmpeg,
+    );
+    const dependencies = createDependencies({
+      renderEditJob: renderingService.renderEditJob.bind(renderingService),
+    });
+
+    await processEditJob(createJob(validPayload), dependencies);
+
+    expect(executeFfmpeg).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "-filter_complex",
+        expect.stringContaining("[out0]scale=w='trunc(iw*(1+0.2*t/0.5)/2)*2'"),
+      ]),
+    );
+    expect(dependencies.renderedOutputStorage.uploadRenderedOutput).toHaveBeenCalled();
+  });
+
   it("processes a V1 edit spec with a mixed transition chain through the FFmpeg render path", async () => {
     const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
     const renderingService = createFfmpegRenderingService(
