@@ -26,7 +26,8 @@ type RenderedClipEntry = RenderedMediaEntry & {
 };
 
 type DipTransitionType = "dip_to_black" | "dip_to_white";
-type RenderedTransitionType = "dissolve" | DipTransitionType;
+type SlideTransitionType = "slide_left" | "slide_right";
+type RenderedTransitionType = "dissolve" | DipTransitionType | SlideTransitionType;
 
 type FFmpegRendererDependencies = {
   localTestVideoPath: string;
@@ -243,7 +244,7 @@ export class FFmpegRenderer implements Renderer {
   private isRenderedTransition(transition: TransitionRenderOperation): transition is TransitionRenderOperation & {
     transitionType: RenderedTransitionType;
   } {
-    return transition.transitionType === "dissolve" || this.isDipTransition(transition);
+    return transition.transitionType === "dissolve" || this.isDipTransition(transition) || this.isSlideTransition(transition);
   }
 
   private isDipTransition(transition: TransitionRenderOperation): transition is TransitionRenderOperation & {
@@ -252,8 +253,20 @@ export class FFmpegRenderer implements Renderer {
     return transition.transitionType === "dip_to_black" || transition.transitionType === "dip_to_white";
   }
 
+  private isSlideTransition(transition: TransitionRenderOperation): transition is TransitionRenderOperation & {
+    transitionType: SlideTransitionType;
+  } {
+    return transition.transitionType === "slide_left" || transition.transitionType === "slide_right";
+  }
+
   private getDipColor(transitionType: DipTransitionType) {
     return transitionType === "dip_to_black" ? "0x000000" : "0xFFFFFF";
+  }
+
+  private getSlideXExpression(transitionType: SlideTransitionType, durationSeconds: number) {
+    return transitionType === "slide_left"
+      ? `W-W*t/${durationSeconds}`
+      : `-W+W*t/${durationSeconds}`;
   }
 
   private async renderMixedTransitionChain(
@@ -306,7 +319,7 @@ export class FFmpegRenderer implements Renderer {
           `[v${index + 1}]trim=start=0:end=${transition.durationMs / 1000},setpts=PTS-STARTPTS[in${index}]`,
           `[out${index}][in${index}]xfade=transition=fade:duration=${transition.durationMs / 1000}:offset=0[${transitionLabel}]`,
         );
-      } else {
+      } else if (this.isDipTransition(transition)) {
         const halfDurationMs = transition.durationMs / 2;
         const colorInputIndex = dipInputOffset;
         const colorOutLabel = `colorout${dipIndex}`;
@@ -323,6 +336,15 @@ export class FFmpegRenderer implements Renderer {
 
         dipInputOffset += 1;
         dipIndex += 1;
+      } else if (this.isSlideTransition(transition)) {
+        const durationSeconds = transition.durationMs / 1000;
+        const slideXExpression = this.getSlideXExpression(transition.transitionType, durationSeconds);
+
+        filters.push(
+          `[v${index}]trim=start=${(fromClip.durationMs - transition.durationMs) / 1000}:end=${fromClip.durationMs / 1000},setpts=PTS-STARTPTS[out${index}]`,
+          `[v${index + 1}]trim=start=0:end=${durationSeconds},setpts=PTS-STARTPTS[in${index}]`,
+          `[out${index}][in${index}]overlay=x='${slideXExpression}':y=0:shortest=1[${transitionLabel}]`,
+        );
       }
 
       concatLabels.push(transitionLabel);
