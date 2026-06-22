@@ -598,6 +598,137 @@ describe("FFmpegRenderer", () => {
     );
   });
 
+  it("renders slide_left transition operations with incoming motion from right to left", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const writeConcatList = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList,
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
+    });
+    const workspacePath = path.resolve(process.cwd(), "tmp", "jobs", editJobId);
+    const chainPath = path.join(workspacePath, "transition-chain-000.mp4");
+    const concatListPath = path.join(workspacePath, "concat-list.txt");
+
+    await renderer.render(
+      createInput({
+        segments: [
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-1",
+            sourceVideoId: videoId,
+            timelineStartMs: 0,
+            timelineEndMs: 2000,
+            trimStartMs: 0,
+            trimEndMs: 2000,
+            durationMs: 2000,
+          },
+          {
+            type: "transition",
+            exportSettings,
+            transitionId: "transition-1",
+            transitionType: "slide_left",
+            fromClipId: "clip-1",
+            toClipId: "clip-2",
+            timelineStartMs: 2000,
+            durationMs: 500,
+            outputTimelineDurationMs: 500,
+          },
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-2",
+            sourceVideoId: videoId,
+            timelineStartMs: 2000,
+            timelineEndMs: 4000,
+            trimStartMs: 5000,
+            trimEndMs: 7000,
+            durationMs: 2000,
+          },
+        ],
+      }),
+    );
+
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      3,
+      expect.arrayContaining([
+        "-filter_complex",
+        "[0:v]scale=1080:1920,fps=60,format=yuv420p,setpts=PTS-STARTPTS[v0];[1:v]scale=1080:1920,fps=60,format=yuv420p,setpts=PTS-STARTPTS[v1];[v0]trim=start=0:end=1.5,setpts=PTS-STARTPTS[body0];[v0]trim=start=1.5:end=2,setpts=PTS-STARTPTS[out0];[v1]trim=start=0:end=0.5,setpts=PTS-STARTPTS[in0];[out0][in0]overlay=x='W-W*t/0.5':y=0:shortest=1[transition0];[v1]trim=start=0.5:end=2,setpts=PTS-STARTPTS[body2];[body0][transition0][body2]concat=n=3:v=1:a=0[v]",
+        chainPath,
+      ]),
+    );
+    expect(writeConcatList).toHaveBeenCalledWith(concatListPath, `file '${chainPath}'`);
+    expect(executeFfmpeg).toHaveBeenCalledTimes(4);
+  });
+
+  it("renders slide_right transition operations with incoming motion from left to right", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList: vi.fn().mockResolvedValue(undefined),
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
+    });
+    const workspacePath = path.resolve(process.cwd(), "tmp", "jobs", editJobId);
+    const chainPath = path.join(workspacePath, "transition-chain-000.mp4");
+
+    await renderer.render(
+      createInput({
+        segments: [
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-1",
+            sourceVideoId: videoId,
+            timelineStartMs: 0,
+            timelineEndMs: 3000,
+            trimStartMs: 0,
+            trimEndMs: 3000,
+            durationMs: 3000,
+          },
+          {
+            type: "transition",
+            exportSettings,
+            transitionId: "transition-1",
+            transitionType: "slide_right",
+            fromClipId: "clip-1",
+            toClipId: "clip-2",
+            timelineStartMs: 3000,
+            durationMs: 1000,
+            outputTimelineDurationMs: 1000,
+          },
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-2",
+            sourceVideoId: videoId,
+            timelineStartMs: 3000,
+            timelineEndMs: 6000,
+            trimStartMs: 5000,
+            trimEndMs: 8000,
+            durationMs: 3000,
+          },
+        ],
+      }),
+    );
+
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      3,
+      expect.arrayContaining([
+        "-filter_complex",
+        expect.stringContaining("[0:v]scale=1080:1920,fps=60,format=yuv420p,setpts=PTS-STARTPTS[v0]"),
+        expect.stringContaining("[out0][in0]overlay=x='-W+W*t/1':y=0:shortest=1[transition0]"),
+        chainPath,
+      ]),
+    );
+  });
+
   it("renders chained dip_to_black followed by dip_to_white without duplicating the middle clip", async () => {
     const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
     const writeConcatList = vi.fn().mockResolvedValue(undefined);
@@ -859,7 +990,7 @@ describe("FFmpegRenderer", () => {
     );
   });
 
-  it("fails explicitly for unsupported slide and zoom transition operations", async () => {
+  it("fails explicitly for unsupported zoom transition operations", async () => {
     const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
     const renderer = new FFmpegRenderer({
       localTestVideoPath,
@@ -868,48 +999,6 @@ describe("FFmpegRenderer", () => {
       createWorkspace: vi.fn().mockResolvedValue(undefined),
       writeConcatList: vi.fn().mockResolvedValue(undefined),
     });
-
-    await expect(
-      renderer.render(
-        createInput({
-          segments: [
-            {
-              type: "clip",
-              exportSettings,
-              clipId: "clip-1",
-              sourceVideoId: videoId,
-              timelineStartMs: 0,
-              timelineEndMs: 2000,
-              trimStartMs: 0,
-              trimEndMs: 2000,
-              durationMs: 2000,
-            },
-            {
-              type: "transition",
-              exportSettings,
-              transitionId: "transition-1",
-              transitionType: "slide_left",
-              fromClipId: "clip-1",
-              toClipId: "clip-2",
-              timelineStartMs: 2000,
-              durationMs: 500,
-              outputTimelineDurationMs: 500,
-            },
-            {
-              type: "clip",
-              exportSettings,
-              clipId: "clip-2",
-              sourceVideoId: videoId,
-              timelineStartMs: 2000,
-              timelineEndMs: 4000,
-              trimStartMs: 5000,
-              trimEndMs: 7000,
-              durationMs: 2000,
-            },
-          ],
-        }),
-      ),
-    ).rejects.toThrow("Unsupported transition renderer: slide_left");
 
     await expect(
       renderer.render(

@@ -238,7 +238,13 @@ export const editSpecV1Schema = z
         });
       }
 
-      if (transition.type === "dissolve" || transition.type === "dip_to_black" || transition.type === "dip_to_white") {
+      if (
+        transition.type === "dissolve" ||
+        transition.type === "dip_to_black" ||
+        transition.type === "dip_to_white" ||
+        transition.type === "slide_left" ||
+        transition.type === "slide_right"
+      ) {
         const fromWindows = transitionWindowsByClipId.get(transition.fromClipId) ?? { incomingMs: 0, outgoingMs: 0 };
         fromWindows.outgoingMs += transition.durationMs;
         transitionWindowsByClipId.set(transition.fromClipId, fromWindows);
