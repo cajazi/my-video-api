@@ -450,7 +450,155 @@ describe("FFmpegRenderer", () => {
     expect(executeFfmpeg).toHaveBeenCalledTimes(5);
   });
 
-  it("fails explicitly for non-dissolve transition operations", async () => {
+  it("renders dip_to_black transition operations with a black color phase", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const writeConcatList = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList,
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
+    });
+    const workspacePath = path.resolve(process.cwd(), "tmp", "jobs", editJobId);
+    const segment0Path = path.join(workspacePath, "segment-000.mp4");
+    const segment1Path = path.join(workspacePath, "segment-001.mp4");
+    const dipPath = path.join(workspacePath, "dip-000.mp4");
+    const concatListPath = path.join(workspacePath, "concat-list.txt");
+
+    await renderer.render(
+      createInput({
+        segments: [
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-1",
+            sourceVideoId: videoId,
+            timelineStartMs: 0,
+            timelineEndMs: 2000,
+            trimStartMs: 0,
+            trimEndMs: 2000,
+            durationMs: 2000,
+          },
+          {
+            type: "transition",
+            exportSettings,
+            transitionId: "transition-1",
+            transitionType: "dip_to_black",
+            fromClipId: "clip-1",
+            toClipId: "clip-2",
+            timelineStartMs: 2000,
+            durationMs: 500,
+            outputTimelineDurationMs: 500,
+          },
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-2",
+            sourceVideoId: videoId,
+            timelineStartMs: 2000,
+            timelineEndMs: 4000,
+            trimStartMs: 5000,
+            trimEndMs: 7000,
+            durationMs: 2000,
+          },
+        ],
+      }),
+    );
+
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      3,
+      expect.arrayContaining([
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=0x000000:s=1080x1920:r=60:d=0.25",
+        "-filter_complex",
+        "[0:v]scale=1080:1920,fps=60,format=yuv420p,setpts=PTS-STARTPTS[v0];[1:v]scale=1080:1920,fps=60,format=yuv420p,setpts=PTS-STARTPTS[v1];[2:v]format=yuv420p,setpts=PTS-STARTPTS,split=2[colorout][colorin];[v0]trim=start=0:end=1.75,setpts=PTS-STARTPTS[outbody];[v0]trim=start=1.75:end=2,setpts=PTS-STARTPTS[outtail];[outtail][colorout]xfade=transition=fade:duration=0.25:offset=0[outfade];[v1]trim=start=0:end=0.25,setpts=PTS-STARTPTS[intail];[colorin][intail]xfade=transition=fade:duration=0.25:offset=0[infade];[v1]trim=start=0.25:end=2,setpts=PTS-STARTPTS[inbody];[outbody][outfade][infade][inbody]concat=n=4:v=1:a=0[v]",
+        dipPath,
+      ]),
+    );
+    expect(writeConcatList).toHaveBeenCalledWith(concatListPath, `file '${dipPath}'`);
+    expect(writeConcatList).not.toHaveBeenCalledWith(
+      concatListPath,
+      expect.stringContaining(`file '${segment0Path}'\nfile '${segment1Path}'`),
+    );
+    expect(executeFfmpeg).toHaveBeenCalledTimes(4);
+  });
+
+  it("renders dip_to_white transition operations with a white color phase", async () => {
+    const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
+    const writeConcatList = vi.fn().mockResolvedValue(undefined);
+    const renderer = new FFmpegRenderer({
+      localTestVideoPath,
+      checkAvailability: vi.fn().mockResolvedValue(true),
+      executeFfmpeg,
+      createWorkspace: vi.fn().mockResolvedValue(undefined),
+      writeConcatList,
+      now: vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1500),
+    });
+    const workspacePath = path.resolve(process.cwd(), "tmp", "jobs", editJobId);
+    const dipPath = path.join(workspacePath, "dip-000.mp4");
+
+    await renderer.render(
+      createInput({
+        segments: [
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-1",
+            sourceVideoId: videoId,
+            timelineStartMs: 0,
+            timelineEndMs: 3000,
+            trimStartMs: 0,
+            trimEndMs: 3000,
+            durationMs: 3000,
+          },
+          {
+            type: "transition",
+            exportSettings,
+            transitionId: "transition-1",
+            transitionType: "dip_to_white",
+            fromClipId: "clip-1",
+            toClipId: "clip-2",
+            timelineStartMs: 3000,
+            durationMs: 1000,
+            outputTimelineDurationMs: 1000,
+          },
+          {
+            type: "clip",
+            exportSettings,
+            clipId: "clip-2",
+            sourceVideoId: videoId,
+            timelineStartMs: 3000,
+            timelineEndMs: 6000,
+            trimStartMs: 5000,
+            trimEndMs: 8000,
+            durationMs: 3000,
+          },
+        ],
+      }),
+    );
+
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      3,
+      expect.arrayContaining([
+        "color=c=0xFFFFFF:s=1080x1920:r=60:d=0.5",
+        "-filter_complex",
+        expect.stringContaining("[outtail][colorout]xfade=transition=fade:duration=0.5:offset=0[outfade]"),
+        dipPath,
+      ]),
+    );
+    expect(executeFfmpeg).toHaveBeenNthCalledWith(
+      3,
+      expect.arrayContaining([
+        expect.stringContaining("[colorin][intail]xfade=transition=fade:duration=0.5:offset=0[infade]"),
+      ]),
+    );
+  });
+
+  it("fails explicitly for unsupported slide and zoom transition operations", async () => {
     const executeFfmpeg = vi.fn().mockResolvedValue(undefined);
     const renderer = new FFmpegRenderer({
       localTestVideoPath,
@@ -501,6 +649,48 @@ describe("FFmpegRenderer", () => {
         }),
       ),
     ).rejects.toThrow("Unsupported transition renderer: slide_left");
+
+    await expect(
+      renderer.render(
+        createInput({
+          segments: [
+            {
+              type: "clip",
+              exportSettings,
+              clipId: "clip-1",
+              sourceVideoId: videoId,
+              timelineStartMs: 0,
+              timelineEndMs: 2000,
+              trimStartMs: 0,
+              trimEndMs: 2000,
+              durationMs: 2000,
+            },
+            {
+              type: "transition",
+              exportSettings,
+              transitionId: "transition-1",
+              transitionType: "zoom_out",
+              fromClipId: "clip-1",
+              toClipId: "clip-2",
+              timelineStartMs: 2000,
+              durationMs: 500,
+              outputTimelineDurationMs: 500,
+            },
+            {
+              type: "clip",
+              exportSettings,
+              clipId: "clip-2",
+              sourceVideoId: videoId,
+              timelineStartMs: 2000,
+              timelineEndMs: 4000,
+              trimStartMs: 5000,
+              trimEndMs: 7000,
+              durationMs: 2000,
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow("Unsupported transition renderer: zoom_out");
   });
 
   it("fails when ffmpeg is missing", async () => {

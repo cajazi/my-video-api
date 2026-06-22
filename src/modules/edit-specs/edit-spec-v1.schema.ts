@@ -168,10 +168,10 @@ export const editSpecV1Schema = z
       const from = clipsById.get(transition.fromClipId);
       const to = clipsById.get(transition.toClipId);
 
-      if (transition.type === "dissolve" && transition.durationMs < minimumFrameDurationMs) {
+      if (transition.durationMs < minimumFrameDurationMs) {
         context.addIssue({
           code: "custom",
-          message: "dissolve durationMs must be at least one frame at export fps",
+          message: "transition durationMs must be at least one frame at export fps",
           path: ["timeline", "transitions", transitionIndex, "durationMs"],
         });
       }
